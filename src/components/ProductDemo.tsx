@@ -17,6 +17,7 @@ import {
   Check,
   ChevronRight,
   Maximize2,
+  X,
 } from "lucide-react";
 
 interface TaskItem {
@@ -40,12 +41,12 @@ export function ProductDemo() {
 
   // Initial demo tasks state
   const [columns, setColumns] = useState<{
-    backlog: TaskItem[];
+    todo: TaskItem[];
     inProgress: TaskItem[];
     inReview: TaskItem[];
     done: TaskItem[];
   }>({
-    backlog: [
+    todo: [
       {
         id: "HAB-104",
         title: "Docker compose healthcheck & backup scripts",
@@ -64,6 +65,16 @@ export function ProductDemo() {
         priority: "P2",
         assignee: "Maria P.",
         avatarBg: "bg-pink-600",
+      },
+      {
+        id: "HAB-112",
+        title: "Webhook signature verification using HMAC-SHA256",
+        tag: "Security",
+        tagColor: "bg-emerald-950/60 text-emerald-300 border-emerald-800/60",
+        priority: "P0",
+        assignee: "David R.",
+        avatarBg: "bg-emerald-600",
+        subtasks: "0/2",
       },
     ],
     inProgress: [
@@ -130,7 +141,7 @@ export function ProductDemo() {
     if (!newTaskTitle.trim()) return;
 
     const newTask: TaskItem = {
-      id: `HAB-${Math.floor(110 + Math.random() * 50)}`,
+      id: `HAB-${Math.floor(115 + Math.random() * 50)}`,
       title: newTaskTitle.trim(),
       tag: "Feature",
       tagColor: "bg-purple-950/60 text-purple-300 border-purple-800/60",
@@ -141,7 +152,7 @@ export function ProductDemo() {
 
     setColumns((prev) => ({
       ...prev,
-      inProgress: [newTask, ...prev.inProgress],
+      todo: [newTask, ...prev.todo],
     }));
 
     setNewTaskTitle("");
@@ -203,7 +214,7 @@ export function ProductDemo() {
                 }`}
               >
                 <Kanban className="w-3.5 h-3.5" />
-                <span>Boards</span>
+                <span>Kanban Board</span>
               </button>
 
               <button
@@ -268,9 +279,10 @@ export function ProductDemo() {
               <span className="text-zinc-500 hidden sm:inline">|</span>
 
               <div className="hidden sm:flex items-center gap-2 text-zinc-400">
-                <span className="text-zinc-400">Filter:</span>
-                <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 font-mono text-[11px]">
-                  All Assignees
+                <span className="text-zinc-400">Perspective:</span>
+                <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-200 font-medium text-[11px] flex items-center gap-1.5 border border-zinc-700/60">
+                  <Kanban className="w-3 h-3 text-white" />
+                  Kanban Board
                 </span>
               </div>
             </div>
@@ -278,7 +290,7 @@ export function ProductDemo() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setIsAddingTask(true)}
-                className="flex items-center gap-1 px-3 py-1 rounded-md bg-white text-zinc-950 hover:bg-zinc-200 font-medium transition-colors"
+                className="flex items-center gap-1 px-3 py-1 rounded-md bg-white text-zinc-950 hover:bg-zinc-200 font-medium transition-colors cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>New Task</span>
@@ -300,14 +312,14 @@ export function ProductDemo() {
                 />
                 <button
                   type="submit"
-                  className="px-4 py-1.5 rounded-lg bg-white text-zinc-950 font-medium text-xs hover:bg-zinc-200"
+                  className="px-4 py-1.5 rounded-lg bg-white text-zinc-950 font-medium text-xs hover:bg-zinc-200 cursor-pointer"
                 >
-                  Add Task
+                  Add to To-Do
                 </button>
                 <button
                   type="button"
                   onClick={() => setIsAddingTask(false)}
-                  className="px-3 py-1.5 rounded-lg text-zinc-400 hover:text-white text-xs"
+                  className="px-3 py-1.5 rounded-lg text-zinc-400 hover:text-white text-xs cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -319,22 +331,22 @@ export function ProductDemo() {
           {activeTab === "kanban" && (
             <div className="p-6 overflow-x-auto min-h-[460px]">
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 min-w-[760px]">
-                {/* Column: Backlog */}
-                <div className="flex flex-col bg-[#111114]/80 rounded-xl p-3 border border-zinc-850 border-zinc-800/50">
+                {/* Column: To-Do */}
+                <div className="flex flex-col bg-[#111114]/80 rounded-xl p-3 border border-zinc-800/50">
                   <div className="flex items-center justify-between mb-3 px-1">
                     <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-zinc-500" />
-                      <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">
-                        Backlog
+                      <span className="w-2 h-2 rounded-full bg-indigo-400" />
+                      <span className="text-xs font-semibold text-zinc-200 uppercase tracking-wider">
+                        To-Do
                       </span>
                     </div>
-                    <span className="text-xs text-zinc-500 font-mono px-1.5 py-0.5 rounded bg-zinc-800/80">
-                      {columns.backlog.length}
+                    <span className="text-xs text-zinc-400 font-mono px-1.5 py-0.5 rounded bg-zinc-800/80">
+                      {columns.todo.length}
                     </span>
                   </div>
 
                   <div className="space-y-2.5 flex-1">
-                    {columns.backlog
+                    {columns.todo
                       .filter((t) => t.title.toLowerCase().includes(searchFilter.toLowerCase()))
                       .map((task) => (
                         <div
@@ -361,9 +373,9 @@ export function ProductDemo() {
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  moveTask(task, "backlog", "inProgress");
+                                  moveTask(task, "todo", "inProgress");
                                 }}
-                                className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-700"
+                                className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-700 transition-colors"
                                 title="Move to In Progress"
                               >
                                 Start →
@@ -376,15 +388,15 @@ export function ProductDemo() {
                 </div>
 
                 {/* Column: In Progress */}
-                <div className="flex flex-col bg-[#111114]/80 rounded-xl p-3 border border-zinc-850 border-zinc-800/50">
+                <div className="flex flex-col bg-[#111114]/80 rounded-xl p-3 border border-zinc-800/50">
                   <div className="flex items-center justify-between mb-3 px-1">
                     <div className="flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full bg-amber-400" />
-                      <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">
+                      <span className="text-xs font-semibold text-zinc-200 uppercase tracking-wider">
                         In Progress
                       </span>
                     </div>
-                    <span className="text-xs text-zinc-500 font-mono px-1.5 py-0.5 rounded bg-zinc-800/80">
+                    <span className="text-xs text-zinc-400 font-mono px-1.5 py-0.5 rounded bg-zinc-800/80">
                       {columns.inProgress.length}
                     </span>
                   </div>
@@ -426,16 +438,28 @@ export function ProductDemo() {
                               </div>
                               <span className="text-zinc-400 text-[11px]">{task.assignee}</span>
                             </div>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                moveTask(task, "inProgress", "inReview");
-                              }}
-                              className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-700"
-                              title="Move to In Review"
-                            >
-                              Review →
-                            </button>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  moveTask(task, "inProgress", "todo");
+                                }}
+                                className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700"
+                                title="Move back to To-Do"
+                              >
+                                ←
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  moveTask(task, "inProgress", "inReview");
+                                }}
+                                className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 hover:text-white hover:bg-zinc-700"
+                                title="Move to In Review"
+                              >
+                                Review →
+                              </button>
+                            </div>
                           </div>
                         </div>
                       ))}
@@ -443,15 +467,15 @@ export function ProductDemo() {
                 </div>
 
                 {/* Column: In Review */}
-                <div className="flex flex-col bg-[#111114]/80 rounded-xl p-3 border border-zinc-850 border-zinc-800/50">
+                <div className="flex flex-col bg-[#111114]/80 rounded-xl p-3 border border-zinc-800/50">
                   <div className="flex items-center justify-between mb-3 px-1">
                     <div className="flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full bg-cyan-400" />
-                      <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">
+                      <span className="text-xs font-semibold text-zinc-200 uppercase tracking-wider">
                         In Review
                       </span>
                     </div>
-                    <span className="text-xs text-zinc-500 font-mono px-1.5 py-0.5 rounded bg-zinc-800/80">
+                    <span className="text-xs text-zinc-400 font-mono px-1.5 py-0.5 rounded bg-zinc-800/80">
                       {columns.inReview.length}
                     </span>
                   </div>
@@ -493,16 +517,28 @@ export function ProductDemo() {
                               </div>
                               <span className="text-zinc-400 text-[11px]">{task.assignee}</span>
                             </div>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                moveTask(task, "inReview", "done");
-                              }}
-                              className="text-[10px] px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 hover:bg-emerald-900"
-                              title="Mark as Done"
-                            >
-                              Done ✓
-                            </button>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  moveTask(task, "inReview", "inProgress");
+                                }}
+                                className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700"
+                                title="Move back to In Progress"
+                              >
+                                ←
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  moveTask(task, "inReview", "done");
+                                }}
+                                className="text-[10px] px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 hover:bg-emerald-900"
+                                title="Mark as Done"
+                              >
+                                Done ✓
+                              </button>
+                            </div>
                           </div>
                         </div>
                       ))}
@@ -510,15 +546,15 @@ export function ProductDemo() {
                 </div>
 
                 {/* Column: Done */}
-                <div className="flex flex-col bg-[#111114]/80 rounded-xl p-3 border border-zinc-850 border-zinc-800/50">
+                <div className="flex flex-col bg-[#111114]/80 rounded-xl p-3 border border-zinc-800/50">
                   <div className="flex items-center justify-between mb-3 px-1">
                     <div className="flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                      <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">
+                      <span className="text-xs font-semibold text-zinc-200 uppercase tracking-wider">
                         Done
                       </span>
                     </div>
-                    <span className="text-xs text-zinc-500 font-mono px-1.5 py-0.5 rounded bg-zinc-800/80">
+                    <span className="text-xs text-zinc-400 font-mono px-1.5 py-0.5 rounded bg-zinc-800/80">
                       {columns.done.length}
                     </span>
                   </div>
@@ -530,7 +566,7 @@ export function ProductDemo() {
                         <div
                           key={task.id}
                           onClick={() => setSelectedTask(task)}
-                          className="group p-3 rounded-lg bg-[#141418] border border-zinc-800/60 opacity-80 hover:opacity-100 transition-all cursor-pointer"
+                          className="group p-3 rounded-lg bg-[#141418] border border-zinc-800/60 opacity-85 hover:opacity-100 transition-all cursor-pointer"
                         >
                           <div className="flex items-center justify-between mb-1.5">
                             <span className="text-[11px] font-mono text-zinc-500 line-through">
@@ -544,11 +580,113 @@ export function ProductDemo() {
 
                           <div className="mt-3 flex items-center justify-between pt-2 border-t border-zinc-800/40 text-[11px] text-zinc-500">
                             <span className="text-emerald-400 font-mono text-[10px]">Merged</span>
-                            <span className="text-zinc-500 text-[11px]">{task.assignee}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-zinc-500 text-[11px]">{task.assignee}</span>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  moveTask(task, "done", "todo");
+                                }}
+                                className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700"
+                                title="Reopen task into To-Do"
+                              >
+                                ↺ Reopen
+                              </button>
+                            </div>
                           </div>
                         </div>
                       ))}
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Kanban Task Detail Modal */}
+          {selectedTask && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <div
+                className="fixed inset-0 bg-black/80 backdrop-blur-sm"
+                onClick={() => setSelectedTask(null)}
+              />
+              <div className="relative w-full max-w-lg bg-[#121215] border border-zinc-700/80 rounded-2xl shadow-2xl shadow-black p-6 z-10 animate-in fade-in zoom-in-95 duration-150">
+                <div className="flex items-center justify-between pb-4 border-b border-zinc-800">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-xs font-mono font-bold text-zinc-400 bg-zinc-800 px-2 py-0.5 rounded">
+                      {selectedTask.id}
+                    </span>
+                    <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${selectedTask.tagColor}`}>
+                      {selectedTask.tag}
+                    </span>
+                    <span className="text-xs font-mono text-zinc-400">
+                      Priority: <strong className="text-white">{selectedTask.priority}</strong>
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setSelectedTask(null)}
+                    className="p-1.5 text-zinc-400 hover:text-white rounded-lg transition-colors cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="py-4 space-y-4">
+                  <h3 className="text-lg font-semibold text-white leading-snug">
+                    {selectedTask.title}
+                  </h3>
+
+                  <div className="grid grid-cols-2 gap-3 text-xs bg-zinc-900/60 p-3 rounded-xl border border-zinc-800/80">
+                    <div>
+                      <span className="text-zinc-500 block">Assignee</span>
+                      <span className="text-zinc-200 font-medium flex items-center gap-1.5 mt-0.5">
+                        <span className={`w-3.5 h-3.5 rounded-full ${selectedTask.avatarBg} text-[8px] text-white flex items-center justify-center`}>
+                          {selectedTask.assignee[0]}
+                        </span>
+                        {selectedTask.assignee}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-zinc-500 block">Subtasks</span>
+                      <span className="text-zinc-200 font-medium mt-0.5 block">
+                        {selectedTask.subtasks || "Completed"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {selectedTask.githubPr && (
+                    <div className="p-3 rounded-lg bg-emerald-950/40 border border-emerald-800/50 flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2 text-emerald-300">
+                        <GitPullRequest className="w-4 h-4" />
+                        <span>Connected to Pull Request {selectedTask.githubPr}</span>
+                      </div>
+                      <span className="font-mono text-[10px] bg-emerald-900/60 text-emerald-200 px-2 py-0.5 rounded">
+                        2-way sync active
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="text-xs text-zinc-400 space-y-1">
+                    <span className="text-zinc-500 uppercase font-mono tracking-wider text-[10px]">
+                      Description &amp; Acceptance Criteria
+                    </span>
+                    <p className="leading-relaxed bg-zinc-950/80 p-3 rounded-lg border border-zinc-800 text-zinc-300 font-mono text-[11px]">
+                      - Automated test suite runs on pull request commit.<br />
+                      - Status changes in Haberry Desk automatically reflect on GitHub branch.<br />
+                      - Sub-50ms latency cached locally with optimistic UI rollbacks.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-zinc-800 flex items-center justify-between">
+                  <div className="text-[11px] text-zinc-500 font-mono">
+                    Kanban Perspective Live Card
+                  </div>
+                  <button
+                    onClick={() => setSelectedTask(null)}
+                    className="px-4 py-2 rounded-lg bg-white text-zinc-950 font-medium text-xs hover:bg-zinc-200 cursor-pointer"
+                  >
+                    Close Preview
+                  </button>
                 </div>
               </div>
             </div>

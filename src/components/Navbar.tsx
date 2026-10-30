@@ -262,19 +262,19 @@ export function Navbar({ onOpenCommandPalette, onOpenAuthModal }: NavbarProps) {
             </kbd>
           </button>
 
-          <button
-            onClick={onOpenAuthModal}
+          <Link
+            href="/auth/sign-in"
             className="text-sm text-zinc-300 hover:text-white transition-colors px-3 py-1.5 cursor-pointer"
           >
             Sign In
-          </button>
+          </Link>
 
-          <button
-            onClick={onOpenAuthModal}
+          <Link
+            href="/auth/sign-up"
             className="inline-flex items-center justify-center bg-white text-zinc-950 font-medium text-[13px] px-3.5 py-1.5 rounded-lg hover:bg-zinc-200 active:scale-[0.98] transition-all duration-150 shadow-sm cursor-pointer"
           >
             Get Started
-          </button>
+          </Link>
 
           {/* Mobile menu trigger */}
           <button
@@ -329,24 +329,20 @@ export function Navbar({ onOpenCommandPalette, onOpenAuthModal }: NavbarProps) {
           </div>
 
           <div className="pt-4 border-t border-zinc-800/80 flex flex-col gap-2">
-            <button
-              onClick={() => {
-                setMobileMenuOpen(false);
-                onOpenAuthModal?.();
-              }}
+            <Link
+              href="/auth/sign-in"
+              onClick={() => setMobileMenuOpen(false)}
               className="w-full text-center py-2 text-zinc-300 hover:text-white border border-zinc-800 rounded-lg text-sm"
             >
               Sign In
-            </button>
-            <button
-              onClick={() => {
-                setMobileMenuOpen(false);
-                onOpenAuthModal?.();
-              }}
+            </Link>
+            <Link
+              href="/auth/sign-up"
+              onClick={() => setMobileMenuOpen(false)}
               className="w-full text-center py-2 bg-white text-zinc-950 font-medium rounded-lg text-sm hover:bg-zinc-200 cursor-pointer"
             >
               Get Started
-            </button>
+            </Link>
           </div>
         </div>
       )}

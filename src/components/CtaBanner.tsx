@@ -1,4 +1,5 @@
 import React from "react";
+import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { GithubIcon } from "./HaberryDeskLogo";
 
@@ -29,13 +30,14 @@ export function CtaBanner({ onTryCloud }: CtaBannerProps) {
         </p>
 
         <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
-          <button
+          <Link
+            href="/auth/sign-up"
             onClick={onTryCloud}
             className="inline-flex items-center gap-2 bg-white text-zinc-950 font-medium text-sm px-6 py-3 rounded-lg hover:bg-zinc-200 active:scale-[0.98] transition-all shadow-md cursor-pointer"
           >
             <span>Try Haberry Desk Cloud</span>
             <ArrowRight className="w-4 h-4 text-zinc-900" />
-          </button>
+          </Link>
 
           <a
             href="https://github.com"

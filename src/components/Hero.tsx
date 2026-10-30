@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { GithubIcon, ProductHuntIcon } from "./HaberryDeskLogo";
 
@@ -40,13 +41,14 @@ export function Hero({ onTryCloud, onViewDemo }: HeroProps) {
 
           {/* CTA Buttons */}
           <div className="mt-9 flex flex-wrap items-center gap-3.5">
-            <button
+            <Link
+              href="/auth/sign-up"
               onClick={onTryCloud}
               className="group inline-flex items-center gap-2.5 bg-white text-zinc-950 font-medium text-[14.5px] px-5 py-2.5 rounded-lg hover:bg-zinc-200 active:scale-[0.99] transition-all duration-150 shadow-sm cursor-pointer"
             >
               <span>Try Haberry Desk Cloud</span>
               <ArrowRight className="w-4 h-4 text-zinc-900 transition-transform duration-200 group-hover:translate-x-0.5" />
-            </button>
+            </Link>
 
             <a
               href="#product-demo"

@@ -1,6 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import { Navbar } from "@/components/Navbar";
 import { Hero } from "@/components/Hero";
 import { ProductDemo } from "@/components/ProductDemo";
@@ -14,9 +16,31 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { AuthModal } from "@/components/AuthModal";
 
 export default function Home() {
+  const router = useRouter();
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"signin" | "trial">("trial");
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+
+  // If already logged in, redirect straight to dashboard
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        router.replace("/dashboard");
+      } else {
+        setIsCheckingAuth(false);
+      }
+    });
+  }, [router]);
+
+  if (isCheckingAuth) {
+    return (
+      <div className="min-h-screen bg-[#09090b] flex items-center justify-center">
+        <div className="w-5 h-5 rounded-full border-2 border-zinc-700 border-t-white animate-spin" />
+      </div>
+    );
+  }
 
   const handleOpenSignIn = () => {
     setAuthMode("signin");
