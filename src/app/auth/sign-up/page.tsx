@@ -2,32 +2,63 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   HaberryDeskIcon,
   GithubIcon,
   GoogleIcon,
 } from "@/components/HaberryDeskLogo";
-import { Check, ArrowLeft, AlertCircle, Loader2, KeyRound } from "lucide-react";
+import {
+  Check,
+  ArrowLeft,
+  AlertCircle,
+  Loader2,
+  KeyRound,
+  Eye,
+  EyeOff,
+  Lock,
+  Mail,
+  User,
+} from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { Toast, type ToastMessage } from "@/components/Toast";
 
 export default function SignUpPage() {
+  const router = useRouter();
+
+  // Form Fields
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  // OTP Verification Step
   const [otpCode, setOtpCode] = useState("");
   const [step, setStep] = useState<"form" | "otp" | "success">("form");
   const [isLoading, setIsLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [countdown, setCountdown] = useState(0);
 
-  // Check if already authenticated on mount
+  // Toast & Inline Error
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Check if already authenticated on mount -> redirect to dashboard
   useEffect(() => {
     const supabase = createClient();
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {
-        window.location.href = "/dashboard";
+        setToast({
+          type: "info",
+          message: "You are already signed in. Redirecting to your dashboard...",
+        });
+        setTimeout(() => {
+          router.replace("/dashboard");
+        }, 800);
       }
     });
-  }, []);
+  }, [router]);
 
   // Countdown timer for resending OTP
   useEffect(() => {
@@ -37,48 +68,102 @@ export default function SignUpPage() {
     }
   }, [countdown]);
 
-  // Step 1: Send OTP for Signup
-  const handleSendOtp = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!email.trim()) return;
+  // Step 1: Submit Signup Form (Name, Email, Password, Confirm Password)
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+
+    // Validation
+    if (!name.trim()) {
+      setErrorMessage("Please enter your name.");
+      setToast({ type: "error", message: "Please enter your name." });
+      return;
+    }
+    if (!email.trim()) {
+      setErrorMessage("Please enter a valid email address.");
+      setToast({ type: "error", message: "Please enter a valid email address." });
+      return;
+    }
+    if (password.length < 6) {
+      setErrorMessage("Password must be at least 6 characters.");
+      setToast({
+        type: "error",
+        message: "Password must be at least 6 characters.",
+      });
+      return;
+    }
+    if (password !== confirmPassword) {
+      setErrorMessage("Passwords do not match.");
+      setToast({
+        type: "error",
+        message: "Passwords do not match. Please verify your password.",
+      });
+      return;
+    }
 
     setIsLoading(true);
-    setErrorMessage(null);
 
     try {
       const supabase = createClient();
       const redirectUrl = `${window.location.origin}/auth/callback?next=/dashboard`;
 
-      const { error } = await supabase.auth.signInWithOtp({
+      const { data, error } = await supabase.auth.signUp({
         email: email.trim(),
+        password: password,
         options: {
           emailRedirectTo: redirectUrl,
-          shouldCreateUser: true,
           data: {
-            full_name: name.trim() || undefined,
+            full_name: name.trim(),
           },
         },
       });
 
       if (error) {
+        const lowerMsg = error.message.toLowerCase();
         if (
-          error.message.includes("API key") ||
-          error.message.includes("Failed to fetch")
+          lowerMsg.includes("already registered") ||
+          lowerMsg.includes("already exists") ||
+          lowerMsg.includes("user already")
         ) {
-          setErrorMessage(
-            "Supabase anon key needs to be configured in .env (NEXT_PUBLIC_SUPABASE_ANON_KEY). Check your dashboard."
-          );
+          const msg = "An account with this email already exists. Please sign in.";
+          setErrorMessage(msg);
+          setToast({
+            type: "error",
+            message: msg,
+            actionText: "Sign in here",
+            actionHref: "/auth/sign-in",
+          });
         } else {
           setErrorMessage(error.message);
+          setToast({ type: "error", message: error.message });
         }
       } else {
-        setStep("otp");
-        setCountdown(30);
+        // If user is already confirmed (e.g. email confirmation disabled in project settings)
+        if (data.session) {
+          setStep("success");
+          setToast({
+            type: "success",
+            message: "Account created! Redirecting to dashboard...",
+          });
+          setTimeout(() => {
+            window.location.href = "/dashboard";
+          }, 1000);
+        } else {
+          // Transition to OTP verification step
+          setStep("otp");
+          setCountdown(60);
+          setOtpCode("");
+          setToast({
+            type: "success",
+            message: `Verification code sent to ${email.trim()}`,
+          });
+        }
       }
     } catch (err: unknown) {
       const msg =
-        err instanceof Error ? err.message : "Registration request failed";
+        err instanceof Error ? err.message : "Account registration failed";
       setErrorMessage(msg);
+      setToast({ type: "error", message: msg });
     } finally {
       setIsLoading(false);
     }
@@ -89,6 +174,10 @@ export default function SignUpPage() {
     e.preventDefault();
     if (!otpCode.trim() || otpCode.trim().length < 6) {
       setErrorMessage("Please enter the 6-digit verification code.");
+      setToast({
+        type: "error",
+        message: "Please enter the 6-digit verification code.",
+      });
       return;
     }
 
@@ -97,16 +186,46 @@ export default function SignUpPage() {
 
     try {
       const supabase = createClient();
-      const { data, error } = await supabase.auth.verifyOtp({
+
+      // First attempt with type: "signup"
+      let { data, error } = await supabase.auth.verifyOtp({
         email: email.trim(),
         token: otpCode.trim(),
-        type: "email",
+        type: "signup",
       });
 
+      // Fallback to "email" if required by GoTrue client
+      if (error && error.message.toLowerCase().includes("type")) {
+        const fallback = await supabase.auth.verifyOtp({
+          email: email.trim(),
+          token: otpCode.trim(),
+          type: "email",
+        });
+        data = fallback.data;
+        error = fallback.error;
+      }
+
       if (error) {
-        setErrorMessage(error.message);
+        const lower = error.message.toLowerCase();
+        if (
+          lower.includes("expired") ||
+          lower.includes("invalid") ||
+          lower.includes("not found")
+        ) {
+          const expiredMsg =
+            "This verification code has expired or is invalid. If you requested a new code, please enter the newest code sent to your email.";
+          setErrorMessage(expiredMsg);
+          setToast({ type: "error", message: expiredMsg });
+        } else {
+          setErrorMessage(error.message);
+          setToast({ type: "error", message: error.message });
+        }
       } else if (data.session || data.user) {
         setStep("success");
+        setToast({
+          type: "success",
+          message: "Verification successful! Opening your workspace...",
+        });
         setTimeout(() => {
           window.location.href = "/dashboard";
         }, 1000);
@@ -114,6 +233,75 @@ export default function SignUpPage() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "OTP verification failed";
       setErrorMessage(msg);
+      setToast({ type: "error", message: msg });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Resend OTP code: generates a new code and expires the previous code
+  const handleResendOtp = async () => {
+    if (countdown > 0) return;
+    setIsLoading(true);
+    setErrorMessage(null);
+    setOtpCode(""); // Clear old expired code from input box
+
+    try {
+      const supabase = createClient();
+      const redirectUrl = `${window.location.origin}/auth/callback?next=/dashboard`;
+
+      // Calling resend generates a new token and automatically expires any older token
+      let { error } = await supabase.auth.resend({
+        type: "signup",
+        email: email.trim(),
+        options: {
+          emailRedirectTo: redirectUrl,
+        },
+      });
+
+      // Fallback to signInWithOtp if user row is already created
+      if (
+        error &&
+        (error.message.toLowerCase().includes("type") ||
+          error.message.toLowerCase().includes("not found"))
+      ) {
+        const fallback = await supabase.auth.signInWithOtp({
+          email: email.trim(),
+          options: {
+            emailRedirectTo: redirectUrl,
+            shouldCreateUser: false,
+          },
+        });
+        error = fallback.error;
+      }
+
+      if (error) {
+        const lower = error.message.toLowerCase();
+        if (
+          lower.includes("security purposes") ||
+          lower.includes("rate limit") ||
+          lower.includes("seconds")
+        ) {
+          setCountdown(60);
+          const limitMsg =
+            "Please wait for the timer to finish before requesting another code.";
+          setErrorMessage(limitMsg);
+          setToast({ type: "error", message: limitMsg });
+        } else {
+          setErrorMessage(error.message);
+          setToast({ type: "error", message: error.message });
+        }
+      } else {
+        setCountdown(60);
+        setToast({
+          type: "success",
+          message: "New 6-digit code sent! Your previous code has now expired.",
+        });
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to resend code";
+      setErrorMessage(msg);
+      setToast({ type: "error", message: msg });
     } finally {
       setIsLoading(false);
     }
@@ -139,15 +327,20 @@ export default function SignUpPage() {
 
       if (error) {
         setErrorMessage(error.message);
+        setToast({ type: "error", message: error.message });
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "OAuth connection failed";
       setErrorMessage(msg);
+      setToast({ type: "error", message: msg });
     }
   };
 
   return (
     <div className="min-h-screen flex flex-col justify-between bg-[#0e0e11] text-[#f4f4f5] px-4 font-sans selection:bg-zinc-800 selection:text-white">
+      {/* Toast Notification */}
+      <Toast toast={toast} onClose={() => setToast(null)} />
+
       {/* Top back link */}
       <div className="pt-6 sm:pt-8 max-w-5xl mx-auto w-full">
         <Link
@@ -161,22 +354,25 @@ export default function SignUpPage() {
 
       {/* Main Card */}
       <div className="flex-1 flex flex-col items-center justify-center py-10">
-        <div className="w-full max-w-[390px]">
+        <div className="w-full max-w-[400px]">
           {/* Logo */}
           <div className="mb-6">
-            <Link href="/" className="inline-block hover:opacity-90 transition-opacity">
+            <Link
+              href="/"
+              className="inline-block hover:opacity-90 transition-opacity"
+            >
               <HaberryDeskIcon className="w-7 h-7 text-white" />
             </Link>
           </div>
 
           {/* Heading */}
           <h1 className="text-2xl font-semibold text-white tracking-tight">
-            Create an account
+            Create your account
           </h1>
           <p className="text-sm text-zinc-400 mt-1 mb-6">
             {step === "otp"
-              ? "Enter the verification code sent to your email."
-              : "Use your email or a connected account to get started."}
+              ? "Enter the 6-digit verification code sent to your email."
+              : "Enter your details to set up your workspace."}
           </p>
 
           {/* Error Banner */}
@@ -187,66 +383,150 @@ export default function SignUpPage() {
             </div>
           )}
 
-          {/* STEP 1: Enter Name & Email */}
+          {/* ========================================================= */}
+          {/* STEP 1: Registration Form (Name, Email, Password, Confirm) */}
+          {/* ========================================================= */}
           {step === "form" && (
             <div className="space-y-4">
-              <form onSubmit={handleSendOtp} className="space-y-4">
+              <form onSubmit={handleSignUp} className="space-y-3.5">
+                {/* Full Name */}
                 <div>
                   <label
                     htmlFor="name-input"
-                    className="block text-xs font-medium text-zinc-200 mb-2"
+                    className="block text-xs font-medium text-zinc-300 mb-1.5"
                   >
-                    Your Name (optional)
+                    Full Name
                   </label>
-                  <input
-                    id="name-input"
-                    type="text"
-                    placeholder="Alex Morgan"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-lg bg-[#141417] border border-zinc-800 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500 transition-colors"
-                  />
+                  <div className="relative">
+                    <User className="w-4 h-4 text-zinc-500 absolute left-3 top-3 pointer-events-none" />
+                    <input
+                      id="name-input"
+                      type="text"
+                      required
+                      placeholder="Alex Morgan"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      className="w-full pl-9 pr-3.5 py-2.5 rounded-lg bg-[#141417] border border-zinc-800 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500 transition-colors"
+                    />
+                  </div>
                 </div>
 
+                {/* Email */}
                 <div>
                   <label
                     htmlFor="email-signup-input"
-                    className="block text-xs font-medium text-zinc-200 mb-2"
+                    className="block text-xs font-medium text-zinc-300 mb-1.5"
                   >
-                    Email
+                    Email Address
                   </label>
-                  <input
-                    id="email-signup-input"
-                    type="email"
-                    required
-                    placeholder="me@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-lg bg-[#141417] border border-zinc-800 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500 transition-colors"
-                  />
+                  <div className="relative">
+                    <Mail className="w-4 h-4 text-zinc-500 absolute left-3 top-3 pointer-events-none" />
+                    <input
+                      id="email-signup-input"
+                      type="email"
+                      required
+                      placeholder="me@example.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full pl-9 pr-3.5 py-2.5 rounded-lg bg-[#141417] border border-zinc-800 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500 transition-colors"
+                    />
+                  </div>
                 </div>
 
+                {/* Password */}
+                <div>
+                  <label
+                    htmlFor="password-input"
+                    className="block text-xs font-medium text-zinc-300 mb-1.5"
+                  >
+                    Password
+                  </label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-zinc-500 absolute left-3 top-3 pointer-events-none" />
+                    <input
+                      id="password-input"
+                      type={showPassword ? "text" : "password"}
+                      required
+                      minLength={6}
+                      placeholder="At least 6 characters"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="w-full pl-9 pr-10 py-2.5 rounded-lg bg-[#141417] border border-zinc-800 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500 transition-colors"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-2.5 text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
+                      title={showPassword ? "Hide password" : "Show password"}
+                    >
+                      {showPassword ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Confirm Password */}
+                <div>
+                  <label
+                    htmlFor="confirm-password-input"
+                    className="block text-xs font-medium text-zinc-300 mb-1.5"
+                  >
+                    Confirm Password
+                  </label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-zinc-500 absolute left-3 top-3 pointer-events-none" />
+                    <input
+                      id="confirm-password-input"
+                      type={showConfirmPassword ? "text" : "password"}
+                      required
+                      minLength={6}
+                      placeholder="Repeat your password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      className="w-full pl-9 pr-10 py-2.5 rounded-lg bg-[#141417] border border-zinc-800 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500 transition-colors"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                      className="absolute right-3 top-2.5 text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
+                      title={showConfirmPassword ? "Hide password" : "Show password"}
+                    >
+                      {showConfirmPassword ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Submit button */}
                 <button
                   type="submit"
                   disabled={isLoading}
-                  className="w-full py-2.5 px-4 rounded-lg bg-[#9ca3af] hover:bg-[#b0b0b8] active:bg-[#8f96a3] disabled:opacity-50 text-[#121214] font-medium text-sm transition-colors cursor-pointer shadow-sm flex items-center justify-center gap-2"
+                  className="w-full mt-2 py-2.5 px-4 rounded-lg bg-white hover:bg-zinc-200 disabled:opacity-50 text-zinc-950 font-semibold text-sm transition-colors cursor-pointer shadow-sm flex items-center justify-center gap-2"
                 >
-                  {isLoading && <Loader2 className="w-4 h-4 animate-spin text-[#121214]" />}
-                  <span>Continue with email</span>
+                  {isLoading && (
+                    <Loader2 className="w-4 h-4 animate-spin text-zinc-950" />
+                  )}
+                  <span>Create Account</span>
                 </button>
               </form>
 
               {/* Divider */}
-              <div className="relative my-6 flex items-center justify-center">
+              <div className="relative my-5 flex items-center justify-center">
                 <div className="absolute inset-0 flex items-center">
                   <div className="w-full border-t border-zinc-800/80" />
                 </div>
                 <span className="relative bg-[#0e0e11] px-3 text-xs text-zinc-500">
-                  or
+                  or continue with
                 </span>
               </div>
 
-              {/* Social Buttons (Google & GitHub, Discord removed) */}
+              {/* Social Buttons */}
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
@@ -267,7 +547,7 @@ export default function SignUpPage() {
                 </button>
               </div>
 
-              {/* Bottom switch link */}
+              {/* Switch link */}
               <p className="text-xs text-zinc-400 text-center mt-6 pt-2">
                 Already have an account?{" "}
                 <Link
@@ -280,14 +560,18 @@ export default function SignUpPage() {
             </div>
           )}
 
-          {/* STEP 2: Enter OTP Code */}
+          {/* ========================================================= */}
+          {/* STEP 2: Enter 6-digit OTP Code                           */}
+          {/* ========================================================= */}
           {step === "otp" && (
             <div className="bg-[#141417] border border-zinc-800 rounded-xl p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150">
               <div className="text-center space-y-1">
                 <div className="w-10 h-10 rounded-full bg-zinc-800 text-zinc-200 flex items-center justify-center mx-auto mb-2">
                   <KeyRound className="w-5 h-5 text-zinc-300" />
                 </div>
-                <h3 className="text-base font-semibold text-white">Enter OTP Code</h3>
+                <h3 className="text-base font-semibold text-white">
+                  Enter Verification Code
+                </h3>
                 <p className="text-xs text-zinc-400">
                   We sent a 6-digit code to{" "}
                   <strong className="text-zinc-200 font-medium">{email}</strong>
@@ -309,7 +593,7 @@ export default function SignUpPage() {
                     className="w-full text-center text-2xl font-mono tracking-[0.35em] px-3 py-3 rounded-lg bg-[#0e0e11] border border-zinc-700 text-white placeholder:text-zinc-600 focus:outline-none focus:border-white transition-colors"
                   />
                   <p className="text-[11px] text-zinc-500 text-center mt-1.5">
-                    Enter the 6-digit verification code from your email
+                    Enter the code sent to your email to activate your account
                   </p>
                 </div>
 
@@ -318,7 +602,9 @@ export default function SignUpPage() {
                   disabled={isLoading || otpCode.length < 6}
                   className="w-full py-2.5 px-4 rounded-lg bg-white hover:bg-zinc-200 disabled:opacity-40 text-zinc-950 font-semibold text-sm transition-colors cursor-pointer shadow-sm flex items-center justify-center gap-2"
                 >
-                  {isLoading && <Loader2 className="w-4 h-4 animate-spin text-zinc-950" />}
+                  {isLoading && (
+                    <Loader2 className="w-4 h-4 animate-spin text-zinc-950" />
+                  )}
                   <span>Verify and Activate Account</span>
                 </button>
               </form>
@@ -338,12 +624,12 @@ export default function SignUpPage() {
 
                 {countdown > 0 ? (
                   <span className="text-zinc-500 font-mono text-[11px]">
-                    Resend in {countdown}s
+                    Resend code in {countdown}s
                   </span>
                 ) : (
                   <button
                     type="button"
-                    onClick={() => handleSendOtp()}
+                    onClick={handleResendOtp}
                     disabled={isLoading}
                     className="text-zinc-300 hover:text-white underline font-medium transition-colors cursor-pointer"
                   >
@@ -351,10 +637,16 @@ export default function SignUpPage() {
                   </button>
                 )}
               </div>
+
+              <p className="text-[10px] text-zinc-600 text-center">
+                Requesting a new code automatically expires any previous code.
+              </p>
             </div>
           )}
 
-          {/* STEP 3: Success Screen */}
+          {/* ========================================================= */}
+          {/* STEP 3: Success Screen                                   */}
+          {/* ========================================================= */}
           {step === "success" && (
             <div className="bg-[#141417] border border-zinc-800 rounded-xl p-6 text-center space-y-4 animate-in fade-in zoom-in-95 duration-150">
               <div className="w-12 h-12 rounded-full bg-emerald-950/80 border border-emerald-700/60 text-emerald-400 flex items-center justify-center mx-auto">
@@ -362,10 +654,10 @@ export default function SignUpPage() {
               </div>
               <div className="space-y-1.5">
                 <h3 className="text-base font-semibold text-white">
-                  Account Created Successfully
+                  Account Verified Successfully!
                 </h3>
                 <p className="text-xs text-zinc-400">
-                  Setting up your Haberry Desk workspace...
+                  Redirecting to your Haberry Desk workspace...
                 </p>
               </div>
             </div>
