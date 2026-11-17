@@ -29,7 +29,7 @@ export interface TaskDetailData {
   key: string;
   title: string;
   description: string;
-  status: "todo" | "in_progress" | "in_review" | "done";
+  status: "todo" | "in_progress" | "in_review" | "done" | string;
   priority: "none" | "low" | "medium" | "high" | "urgent";
   assignee: string;
   creatorName?: string;
@@ -37,6 +37,7 @@ export interface TaskDetailData {
   startDate?: string;
   dueDate?: string;
   project: string;
+  project_id?: string;
   subtasks: SubtaskItem[];
   relatedTask?: { key: string; title: string };
   activities: { id: string; author: string; action: string; time: string }[];

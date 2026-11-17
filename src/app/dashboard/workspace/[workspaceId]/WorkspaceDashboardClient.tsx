@@ -30,6 +30,10 @@ import {
   ShieldAlert,
   Layout,
   FolderKanban,
+  MoreHorizontal,
+  Folder,
+  CornerUpRight,
+  Trash2,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { User } from "@supabase/supabase-js";
@@ -45,6 +49,12 @@ import {
   CreateProjectModal,
   ProjectIcon,
 } from "@/components/CreateProjectModal";
+import { DeleteProjectModal } from "@/components/DeleteProjectModal";
+import {
+  ProjectSettingsView,
+  type WorkflowColumnItem,
+  DEFAULT_WORKFLOW_COLUMNS,
+} from "@/components/ProjectSettingsView";
 
 // Custom Haberry Avatar with exact gradient seen in the screenshots
 export function HaberryAvatar({
@@ -165,15 +175,23 @@ export default function WorkspaceDashboardClient({
   // UI Navigation - Defaults to Home
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeView, setActiveView] = useState<
-    "home" | "kanban" | "inbox" | "tasks" | "members"
+    "home" | "kanban" | "inbox" | "tasks" | "members" | "settings"
   >("home");
+  const [settingsTab, setSettingsTab] = useState<string>("general");
   const [kanbanTab, setKanbanTab] = useState<"tasks" | "backlog">("tasks");
+
+  // Project Action Menu & Modals
+  const [projectMenuOpenId, setProjectMenuOpenId] = useState<string | null>(null);
+  const [projectToDelete, setProjectToDelete] = useState<ProjectItem | null>(null);
+  const [deleteProjectModalOpen, setDeleteProjectModalOpen] = useState(false);
+  const [copiedNotice, setCopiedNotice] = useState<string | null>(null);
+  const [projectColumns, setProjectColumns] = useState<{
+    [projectId: string]: WorkflowColumnItem[];
+  }>({});
 
   // Modals
   const [newTaskModalOpen, setNewTaskModalOpen] = useState(false);
-  const [newTaskDefaultStatus, setNewTaskDefaultStatus] = useState<
-    "todo" | "in_progress" | "in_review" | "done"
-  >("todo");
+  const [newTaskDefaultStatus, setNewTaskDefaultStatus] = useState<string>("todo");
   const [selectedTaskForDetail, setSelectedTaskForDetail] =
     useState<TaskDetailData | null>(null);
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
@@ -199,7 +217,6 @@ export default function WorkspaceDashboardClient({
   // Load workspace, projects, tasks, members & auth from Supabase
   useEffect(() => {
     setIsLoading(true);
-    setActiveView("home");
 
     const supabase = createClient();
     supabase.auth.getUser().then(async ({ data: { user }, error }) => {
@@ -376,17 +393,42 @@ export default function WorkspaceDashboardClient({
 
         setProjects(loadedProjects);
 
-        // Active project selection
-        if (loadedProjects.length > 0) {
-          const active = loadedProjects[0];
-          setActiveProjectId(active.id);
-          setProjectName(active.name);
-          setTaskPrefix(active.prefix);
+        // URL synchronization: determine active project and view from URL query params
+        let targetProj = loadedProjects[0] || null;
+        let initialView: "home" | "kanban" | "settings" = "home";
+
+        if (typeof window !== "undefined") {
+          const urlParams = new URLSearchParams(window.location.search);
+          const projectParam = urlParams.get("project");
+          const viewParam = urlParams.get("view");
+
+          if (projectParam) {
+            const found = loadedProjects.find(
+              (p) => p.id === projectParam || p.name.toLowerCase() === projectParam.toLowerCase()
+            );
+            if (found) {
+              targetProj = found;
+              initialView = "kanban";
+            }
+          }
+          if (viewParam === "settings") {
+            initialView = "settings";
+          } else if (viewParam === "kanban" && targetProj) {
+            initialView = "kanban";
+          }
+        }
+
+        if (targetProj) {
+          setActiveProjectId(targetProj.id);
+          setProjectName(targetProj.name);
+          setTaskPrefix(targetProj.prefix);
         } else {
           setActiveProjectId(null);
           setProjectName("");
           setTaskPrefix("");
         }
+
+        setActiveView(initialView);
 
         // Fetch tasks for this workspace
         const { data: dbTasks } = await supabase
@@ -763,6 +805,9 @@ export default function WorkspaceDashboardClient({
     setProjectName(newProject.name);
     setTaskPrefix(newProject.prefix);
     setActiveView("kanban");
+    if (typeof window !== "undefined") {
+      window.history.pushState({}, "", `/dashboard/workspace/${workspaceId}?project=${newProject.id}`);
+    }
   };
 
   // Select Active Project from Sidebar
@@ -770,12 +815,141 @@ export default function WorkspaceDashboardClient({
     setActiveProjectId(proj.id);
     setProjectName(proj.name);
     setTaskPrefix(proj.prefix);
+    if (typeof window !== "undefined") {
+      window.history.pushState({}, "", `/dashboard/workspace/${workspaceId}?project=${proj.id}`);
+    }
+  };
+
+  // Close 3-dots project dropdown on outside click
+  useEffect(() => {
+    function handleClickOutside() {
+      if (projectMenuOpenId) {
+        setProjectMenuOpenId(null);
+      }
+    }
+    if (projectMenuOpenId) {
+      document.addEventListener("click", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("click", handleClickOutside);
+    };
+  }, [projectMenuOpenId]);
+
+  // Dynamic columns for current active project
+  const currentColumns: WorkflowColumnItem[] = React.useMemo(() => {
+    if (activeProjectId && projectColumns[activeProjectId]) {
+      return projectColumns[activeProjectId];
+    }
+    const currentProj = projects.find((p) => p.id === activeProjectId);
+    if (currentProj?.description) {
+      try {
+        let desc = currentProj.description;
+        if (desc.startsWith("icon:")) {
+          desc = desc.split("::").slice(1).join("::");
+        }
+        if (desc.startsWith("{") && desc.endsWith("}")) {
+          const parsed = JSON.parse(desc);
+          if (Array.isArray(parsed.columns) && parsed.columns.length > 0) {
+            return parsed.columns;
+          }
+        }
+      } catch {}
+    }
+    return DEFAULT_WORKFLOW_COLUMNS;
+  }, [activeProjectId, projectColumns, projects]);
+
+  // Share Project URL
+  const handleShareProject = (proj: ProjectItem) => {
+    const url =
+      typeof window !== "undefined"
+        ? `${window.location.origin}/dashboard/workspace/${workspaceId}?project=${proj.id}`
+        : "";
+    if (navigator.clipboard && url) {
+      navigator.clipboard.writeText(url).catch(() => {});
+    }
+    setCopiedNotice(`Copied project link for ${proj.name}!`);
+    setTimeout(() => setCopiedNotice(null), 3000);
+  };
+
+  // Delete Project & Tasks from Supabase & state
+  const handleConfirmDeleteProject = async (projectId: string) => {
+    const supabase = createClient();
+    try {
+      await supabase
+        .from("tasks")
+        .delete()
+        .eq("workspace_id", workspaceId)
+        .eq("project_id", projectId);
+
+      await supabase.from("projects").delete().eq("id", projectId);
+
+      const deletedProj = projects.find((p) => p.id === projectId);
+      const remainingProjects = projects.filter((p) => p.id !== projectId);
+      setProjects(remainingProjects);
+      setTasks((prev) =>
+        prev.filter(
+          (t) =>
+            t.project_id !== projectId &&
+            (!deletedProj || (t.project !== deletedProj.name && !t.key?.startsWith(deletedProj.prefix)))
+        )
+      );
+
+      if (activeProjectId === projectId) {
+        if (remainingProjects.length > 0) {
+          handleSelectProject(remainingProjects[0]);
+          setActiveView("kanban");
+        } else {
+          setActiveProjectId(null);
+          setProjectName("");
+          setTaskPrefix("");
+          setActiveView("home");
+        }
+      }
+    } catch (err) {
+      console.error("Error deleting project:", err);
+    }
+  };
+
+  // Update Project (General settings & workflow columns)
+  const handleUpdateProject = async (
+    updatedProj: ProjectItem,
+    newColumns?: WorkflowColumnItem[]
+  ) => {
+    const supabase = createClient();
+    try {
+      await supabase
+        .from("projects")
+        .update({
+          name: updatedProj.name,
+          prefix: updatedProj.prefix,
+          description: updatedProj.description,
+        })
+        .eq("id", updatedProj.id);
+
+      setProjects((prev) =>
+        prev.map((p) => (p.id === updatedProj.id ? updatedProj : p))
+      );
+
+      if (activeProjectId === updatedProj.id) {
+        setProjectName(updatedProj.name);
+        setTaskPrefix(updatedProj.prefix);
+      }
+
+      if (newColumns && updatedProj.id) {
+        setProjectColumns((prev) => ({
+          ...prev,
+          [updatedProj.id]: newColumns,
+        }));
+      }
+    } catch (err) {
+      console.error("Error updating project:", err);
+    }
   };
 
   // Move task status & record in Supabase
   const moveTaskStatus = async (
     taskId: string,
-    newStatus: "todo" | "in_progress" | "in_review" | "done"
+    newStatus: "todo" | "in_progress" | "in_review" | "done" | string
   ) => {
     const currentTask = tasks.find((t) => t.id === taskId);
     if (!currentTask || currentTask.status === newStatus) return;
@@ -803,7 +977,7 @@ export default function WorkspaceDashboardClient({
         if (t.id === taskId) {
           const updated = {
             ...t,
-            status: newStatus,
+            status: newStatus as any,
             activities: [newActivity, ...(t.activities || [])],
           };
           if (selectedTaskForDetail?.id === taskId) {
@@ -862,7 +1036,7 @@ export default function WorkspaceDashboardClient({
 
   const handleDrop = async (
     e: React.DragEvent,
-    targetStatus: "todo" | "in_progress" | "in_review" | "done"
+    targetStatus: "todo" | "in_progress" | "in_review" | "done" | string
   ) => {
     e.preventDefault();
     const id = e.dataTransfer.getData("text/plain") || draggedTaskId;
@@ -875,9 +1049,10 @@ export default function WorkspaceDashboardClient({
   const handleCreateTask = async (newTaskData: {
     title: string;
     description: string;
-    status: "todo" | "in_progress" | "in_review" | "done";
+    status: "todo" | "in_progress" | "in_review" | "done" | string;
     priority: "none" | "low" | "medium" | "high" | "urgent";
     assignee: string;
+    createMore?: boolean;
   }) => {
     const currentPrefix = taskPrefix || "HAB";
     let maxNum = 0;
@@ -1185,6 +1360,60 @@ export default function WorkspaceDashboardClient({
     );
   }
 
+  if (activeView === "settings") {
+    return (
+      <div className="min-h-screen bg-[#0a0a0c] text-[#f4f4f5] flex flex-col font-sans selection:bg-zinc-800 selection:text-white">
+        <ProjectSettingsView
+          workspaceId={workspaceId}
+          workspaceName={workspaceName}
+          projects={projects}
+          activeProjectId={activeProjectId}
+          onSelectProject={(proj) => {
+            handleSelectProject(proj);
+          }}
+          onUpdateProject={handleUpdateProject}
+          onBack={() => {
+            if (projects.length > 0) {
+              setActiveView("kanban");
+              if (typeof window !== "undefined") {
+                const pid = activeProjectId || projects[0]?.id;
+                window.history.pushState({}, "", `/dashboard/workspace/${workspaceId}?project=${pid}`);
+              }
+            } else {
+              setActiveView("home");
+              if (typeof window !== "undefined") {
+                window.history.pushState({}, "", `/dashboard/workspace/${workspaceId}`);
+              }
+            }
+          }}
+          tasks={tasks}
+          userName={currentUserName}
+          userEmail={user?.email || "owner@company.com"}
+          initialTab={settingsTab}
+        />
+
+        {/* Floating Toast Notification */}
+        {copiedNotice && (
+          <div className="fixed bottom-6 right-6 z-50 bg-[#16171b] border border-zinc-700 text-white text-xs px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2 duration-200">
+            <Check className="w-4 h-4 text-emerald-400" />
+            <span>{copiedNotice}</span>
+          </div>
+        )}
+
+        {/* Delete Project Modal */}
+        <DeleteProjectModal
+          project={projectToDelete}
+          isOpen={deleteProjectModalOpen}
+          onClose={() => {
+            setDeleteProjectModalOpen(false);
+            setProjectToDelete(null);
+          }}
+          onConfirmDelete={handleConfirmDeleteProject}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#0e0e11] text-[#f4f4f5] flex font-sans selection:bg-zinc-800 selection:text-white">
       {/* Background click listener to close dropdowns */}
@@ -1269,6 +1498,18 @@ export default function WorkspaceDashboardClient({
                       </button>
                       <button
                         type="button"
+                        onClick={() => {
+                          setUserMenuOpen(false);
+                          setSettingsTab("general");
+                          setActiveView("settings");
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-zinc-300 hover:text-white hover:bg-zinc-800/60 cursor-pointer"
+                      >
+                        <Settings className="w-3.5 h-3.5 text-zinc-400" />
+                        <span>Settings</span>
+                      </button>
+                      <button
+                        type="button"
                         onClick={handleSignOut}
                         className="w-full flex items-center gap-2 px-3 py-2 text-red-400 hover:bg-zinc-800/60 cursor-pointer"
                       >
@@ -1337,7 +1578,12 @@ export default function WorkspaceDashboardClient({
           <nav className="space-y-0.5 text-xs font-medium">
             <button
               type="button"
-              onClick={() => setActiveView("home")}
+              onClick={() => {
+                setActiveView("home");
+                if (typeof window !== "undefined") {
+                  window.history.pushState({}, "", `/dashboard/workspace/${workspaceId}`);
+                }
+              }}
               className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-colors cursor-pointer ${
                 activeView === "home"
                   ? "bg-[#1c1d22] text-white font-semibold"
@@ -1436,27 +1682,33 @@ export default function WorkspaceDashboardClient({
                 </button>
               ) : (
                 projects.map((proj) => {
-                  const isCurrent = proj.id === activeProjectId;
+                  const isCurrent = proj.id === activeProjectId && activeView === "kanban";
                   const projTaskCount = tasks.filter(
                     (t) =>
+                      t.project_id === proj.id ||
                       t.project === proj.name ||
-                      t.key.startsWith(proj.prefix)
+                      (proj.prefix && t.key?.startsWith(proj.prefix))
                   ).length;
                   return (
-                    <button
+                    <div
                       key={proj.id}
-                      type="button"
-                      onClick={() => {
-                        handleSelectProject(proj);
-                        setActiveView("kanban");
-                      }}
-                      className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer group ${
+                      className={`group relative w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors ${
                         isCurrent
                           ? "bg-[#1c1d22] text-white font-medium border border-zinc-700/80"
                           : "text-zinc-300 hover:text-white hover:bg-zinc-800/40"
                       }`}
                     >
-                      <div className="flex items-center gap-2 truncate">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleSelectProject(proj);
+                          setActiveView("kanban");
+                          if (typeof window !== "undefined") {
+                            window.history.pushState({}, "", `/dashboard/workspace/${workspaceId}?project=${proj.id}`);
+                          }
+                        }}
+                        className="flex items-center gap-2 truncate flex-1 text-left cursor-pointer mr-1"
+                      >
                         <ProjectIcon
                           name={proj.icon}
                           className={`w-3.5 h-3.5 shrink-0 ${
@@ -1466,14 +1718,170 @@ export default function WorkspaceDashboardClient({
                           }`}
                         />
                         <span className="truncate">{proj.name}</span>
+                      </button>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        {/* 3-dots button on hover */}
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setProjectMenuOpenId((prev) =>
+                                prev === proj.id ? null : proj.id
+                              );
+                            }}
+                            className={`p-1 rounded text-zinc-400 hover:text-white hover:bg-zinc-700/60 cursor-pointer transition-all ${
+                              projectMenuOpenId === proj.id
+                                ? "opacity-100 bg-zinc-700/60 text-white"
+                                : "opacity-0 group-hover:opacity-100"
+                            }`}
+                            title="Project options"
+                          >
+                            <MoreHorizontal className="w-3.5 h-3.5" />
+                          </button>
+
+                          {/* Dropdown Menu matching media_1794916078384_624b5f41.png */}
+                          {projectMenuOpenId === proj.id && (
+                            <div
+                              onClick={(e) => e.stopPropagation()}
+                              className="absolute right-0 top-full mt-1 z-50 w-44 rounded-xl bg-[#141518] border border-zinc-800 shadow-2xl py-1.5 px-1 text-xs animate-in fade-in zoom-in-95 duration-100 space-y-0.5"
+                            >
+                              {/* View Project */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setProjectMenuOpenId(null);
+                                  handleSelectProject(proj);
+                                  setActiveView("kanban");
+                                  if (typeof window !== "undefined") {
+                                    window.history.pushState({}, "", `/dashboard/workspace/${workspaceId}?project=${proj.id}`);
+                                  }
+                                }}
+                                className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-zinc-200 hover:text-white hover:bg-zinc-800/80 transition-colors cursor-pointer text-left font-medium"
+                              >
+                                <Folder className="w-3.5 h-3.5 text-zinc-400" />
+                                <span>View Project</span>
+                              </button>
+
+                              {/* Share Project */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setProjectMenuOpenId(null);
+                                  handleShareProject(proj);
+                                }}
+                                className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-zinc-200 hover:text-white hover:bg-zinc-800/80 transition-colors cursor-pointer text-left font-medium"
+                              >
+                                <CornerUpRight className="w-3.5 h-3.5 text-zinc-400" />
+                                <span>Share Project</span>
+                              </button>
+
+                              {/* Project settings */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setProjectMenuOpenId(null);
+                                  handleSelectProject(proj);
+                                  setSettingsTab("general");
+                                  setActiveView("settings");
+                                  if (typeof window !== "undefined") {
+                                    window.history.pushState({}, "", `/dashboard/workspace/${workspaceId}?view=settings&project=${proj.id}`);
+                                  }
+                                }}
+                                className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-zinc-200 hover:text-white hover:bg-zinc-800/80 transition-colors cursor-pointer text-left font-medium"
+                              >
+                                <Settings className="w-3.5 h-3.5 text-zinc-400" />
+                                <span>Project settings</span>
+                              </button>
+
+                              {/* Divider */}
+                              <div className="border-t border-zinc-800 my-1" />
+
+                              {/* Delete Project */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setProjectMenuOpenId(null);
+                                  setProjectToDelete(proj);
+                                  setDeleteProjectModalOpen(true);
+                                }}
+                                className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-red-500 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer text-left font-medium"
+                              >
+                                <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                                <span>Delete Project</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        <span
+                          className={`text-[10px] text-zinc-500 font-mono transition-opacity ${
+                            projectMenuOpenId === proj.id
+                              ? "hidden"
+                              : "group-hover:hidden"
+                          }`}
+                        >
+                          {projTaskCount}
+                        </span>
                       </div>
-                      <span className="text-[10px] text-zinc-500 font-mono">
-                        {projTaskCount}
-                      </span>
-                    </button>
+                    </div>
                   );
                 })
               )}
+            </div>
+          </div>
+        </div>
+
+        {/* Navigation Bottom Links (Settings, Invite, Theme) */}
+        <div className="p-3 space-y-3 border-t border-zinc-800/70">
+          <div className="space-y-0.5 text-xs text-zinc-400">
+            <button
+              type="button"
+              onClick={() => setInviteModalOpen(true)}
+              className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg hover:text-white hover:bg-zinc-800/40 transition-colors cursor-pointer"
+            >
+              <UserPlus className="w-4 h-4 text-zinc-400" />
+              <span>Invite people</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSettingsTab("general");
+                setActiveView("settings");
+                if (typeof window !== "undefined") {
+                  const pid = activeProjectId || projects[0]?.id;
+                  const url = pid
+                    ? `/dashboard/workspace/${workspaceId}?view=settings&project=${pid}`
+                    : `/dashboard/workspace/${workspaceId}?view=settings`;
+                  window.history.pushState({}, "", url);
+                }
+              }}
+              className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg hover:text-white hover:bg-zinc-800/40 text-zinc-400 transition-colors cursor-pointer"
+            >
+              <Settings className="w-4 h-4 text-zinc-400" />
+              <span>Settings</span>
+            </button>
+          </div>
+
+          {/* Version & Theme Toggle Row */}
+          <div className="flex items-center justify-between px-2 pt-1 text-xs text-zinc-500">
+            <span className="font-mono text-[11px]">v2.48.0</span>
+
+            <div className="flex items-center bg-[#141518] border border-zinc-800 rounded-full p-0.5">
+              <div
+                title="Dark theme (active)"
+                className="p-1 rounded-full bg-zinc-800 text-zinc-200"
+              >
+                <Moon className="w-3 h-3" />
+              </div>
+              <div
+                title="Light theme"
+                className="p-1 rounded-full text-zinc-500 hover:text-zinc-300"
+              >
+                <Sun className="w-3 h-3" />
+              </div>
             </div>
           </div>
         </div>
@@ -1647,230 +2055,110 @@ export default function WorkspaceDashboardClient({
                   </div>
                 </div>
 
-                {/* 4 KANBAN COLUMNS WITH DRAG AND DROP */}
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 flex-1 items-start">
-                  {/* COLUMN 1: TO DO */}
-                  <div
-                    onDragOver={handleDragOver}
-                    onDrop={(e) => handleDrop(e, "todo")}
-                    className="bg-[#121316] border border-zinc-800/80 rounded-xl p-3.5 space-y-3 min-h-[400px]"
-                  >
-                    <div className="flex items-center justify-between px-1">
-                      <div className="flex items-center gap-2">
-                        <Circle className="w-3.5 h-3.5 text-zinc-400" />
-                        <span className="text-xs font-semibold text-zinc-200">
-                          To Do
-                        </span>
-                        <span className="text-[11px] text-zinc-500 font-mono">
-                          {tasks.filter((t) => t.status === "todo").length}
-                        </span>
-                      </div>
+                {/* KANBAN COLUMNS WITH DYNAMIC WORKFLOW & DRAG AND DROP */}
+                <div
+                  className={`grid grid-cols-1 md:grid-cols-2 ${
+                    currentColumns.length <= 3
+                      ? "xl:grid-cols-3"
+                      : currentColumns.length === 4
+                      ? "xl:grid-cols-4"
+                      : "xl:grid-cols-5"
+                  } gap-4 flex-1 items-start overflow-x-auto pb-4`}
+                >
+                  {currentColumns.map((col, idx) => {
+                    const colTasks = tasks.filter((t) => {
+                      const belongsToProject = activeProjectId
+                        ? t.project_id === activeProjectId ||
+                          t.project === projectName ||
+                          (taskPrefix && t.key?.startsWith(taskPrefix))
+                        : true;
+                      return belongsToProject && t.status === col.id;
+                    });
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setNewTaskDefaultStatus("todo");
-                          setNewTaskModalOpen(true);
-                        }}
-                        className="text-zinc-500 hover:text-white p-1 rounded cursor-pointer"
-                        title="Add task in To Do"
+                    return (
+                      <div
+                        key={col.id}
+                        onDragOver={handleDragOver}
+                        onDrop={(e) => handleDrop(e, col.id)}
+                        className="bg-[#121316] border border-zinc-800/80 rounded-xl p-3.5 space-y-3 min-h-[400px] flex flex-col"
                       >
-                        <Plus className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-
-                    <div className="space-y-2">
-                      {tasks
-                        .filter((t) => t.status === "todo")
-                        .map((task) => (
-                          <div
-                            key={task.id}
-                            draggable
-                            onDragStart={(e) => handleDragStart(e, task.id)}
-                            onClick={() => setSelectedTaskForDetail(task)}
-                            className="p-3.5 rounded-xl bg-[#18191d] border border-zinc-800 hover:border-zinc-700 transition-all space-y-2 cursor-grab active:cursor-grabbing group shadow-sm"
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className="text-[11px] font-mono text-zinc-500">
-                                {task.key}
-                              </span>
-                              <HaberryAvatar className="w-4 h-4 text-[5px]" text="h" />
-                            </div>
-                            <p className="text-xs text-white font-medium">
-                              {task.title}
-                            </p>
+                        <div className="flex items-center justify-between px-1">
+                          <div className="flex items-center gap-2">
+                            {col.done ? (
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                            ) : idx === 0 ? (
+                              <Circle className="w-3.5 h-3.5 text-zinc-400" />
+                            ) : idx === 1 ? (
+                              <div className="w-3.5 h-3.5 rounded-full border border-amber-500/80 border-t-amber-400" />
+                            ) : idx === 2 ? (
+                              <div className="w-3.5 h-3.5 rounded-full border border-cyan-500/80 border-t-cyan-400" />
+                            ) : (
+                              <div className="w-3.5 h-3.5 rounded-full border border-purple-400/80 border-dashed" />
+                            )}
+                            <span className="text-xs font-semibold text-zinc-200">
+                              {col.name}
+                            </span>
+                            <span className="text-[11px] text-zinc-500 font-mono">
+                              {colTasks.length}
+                            </span>
                           </div>
-                        ))}
-                    </div>
-                  </div>
 
-                  {/* COLUMN 2: IN PROGRESS */}
-                  <div
-                    onDragOver={handleDragOver}
-                    onDrop={(e) => handleDrop(e, "in_progress")}
-                    className="bg-[#121316] border border-zinc-800/80 rounded-xl p-3.5 space-y-3 min-h-[400px]"
-                  >
-                    <div className="flex items-center justify-between px-1">
-                      <div className="flex items-center gap-2">
-                        <div className="w-3.5 h-3.5 rounded-full border border-amber-500/80 border-t-amber-400" />
-                        <span className="text-xs font-semibold text-zinc-200">
-                          In Progress
-                        </span>
-                        <span className="text-[11px] text-zinc-500 font-mono">
-                          {tasks.filter((t) => t.status === "in_progress").length}
-                        </span>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setNewTaskDefaultStatus("in_progress");
-                          setNewTaskModalOpen(true);
-                        }}
-                        className="text-zinc-500 hover:text-white p-1 rounded cursor-pointer"
-                        title="Add task in In Progress"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-
-                    <div className="space-y-2">
-                      {tasks
-                        .filter((t) => t.status === "in_progress")
-                        .map((task) => (
-                          <div
-                            key={task.id}
-                            draggable
-                            onDragStart={(e) => handleDragStart(e, task.id)}
-                            onClick={() => setSelectedTaskForDetail(task)}
-                            className="p-3.5 rounded-xl bg-[#18191d] border border-amber-900/40 hover:border-amber-700 transition-all space-y-2 cursor-grab active:cursor-grabbing group shadow-sm"
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className="text-[11px] font-mono text-zinc-500">
-                                {task.key}
-                              </span>
-                              <HaberryAvatar className="w-4 h-4 text-[5px]" text="h" />
-                            </div>
-                            <p className="text-xs text-white font-medium">
-                              {task.title}
-                            </p>
+                          <div className="flex items-center gap-1">
+                            {col.done && (
+                              <Archive className="w-3.5 h-3.5 text-zinc-500" />
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNewTaskDefaultStatus(col.id);
+                                setNewTaskModalOpen(true);
+                              }}
+                              className="text-zinc-500 hover:text-white p-1 rounded cursor-pointer"
+                              title={`Add task in ${col.name}`}
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                            </button>
                           </div>
-                        ))}
-                    </div>
-                  </div>
+                        </div>
 
-                  {/* COLUMN 3: IN REVIEW */}
-                  <div
-                    onDragOver={handleDragOver}
-                    onDrop={(e) => handleDrop(e, "in_review")}
-                    className="bg-[#121316] border border-zinc-800/80 rounded-xl p-3.5 space-y-3 min-h-[400px]"
-                  >
-                    <div className="flex items-center justify-between px-1">
-                      <div className="flex items-center gap-2">
-                        <div className="w-3.5 h-3.5 rounded-full border border-cyan-500/80 border-t-cyan-400" />
-                        <span className="text-xs font-semibold text-zinc-200">
-                          In Review
-                        </span>
-                        <span className="text-[11px] text-zinc-500 font-mono">
-                          {tasks.filter((t) => t.status === "in_review").length}
-                        </span>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setNewTaskDefaultStatus("in_review");
-                          setNewTaskModalOpen(true);
-                        }}
-                        className="text-zinc-500 hover:text-white p-1 rounded cursor-pointer"
-                        title="Add task in In Review"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-
-                    <div className="space-y-2">
-                      {tasks
-                        .filter((t) => t.status === "in_review")
-                        .map((task) => (
-                          <div
-                            key={task.id}
-                            draggable
-                            onDragStart={(e) => handleDragStart(e, task.id)}
-                            onClick={() => setSelectedTaskForDetail(task)}
-                            className="p-3.5 rounded-xl bg-[#18191d] border border-cyan-900/40 hover:border-cyan-700 transition-all space-y-2 cursor-grab active:cursor-grabbing group shadow-sm"
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className="text-[11px] font-mono text-zinc-500">
-                                {task.key}
-                              </span>
-                              <HaberryAvatar className="w-4 h-4 text-[5px]" text="h" />
+                        <div className="space-y-2 flex-1">
+                          {colTasks.map((task) => (
+                            <div
+                              key={task.id}
+                              draggable
+                              onDragStart={(e) => handleDragStart(e, task.id)}
+                              onClick={() => setSelectedTaskForDetail(task)}
+                              className={`p-3.5 rounded-xl bg-[#18191d] border transition-all space-y-2 cursor-grab active:cursor-grabbing group shadow-sm ${
+                                col.done
+                                  ? "border-zinc-800 hover:border-zinc-700"
+                                  : idx === 1
+                                  ? "border-amber-900/40 hover:border-amber-700"
+                                  : idx === 2
+                                  ? "border-cyan-900/40 hover:border-cyan-700"
+                                  : "border-zinc-800 hover:border-zinc-700"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-mono text-zinc-500">
+                                  {task.key}
+                                </span>
+                                <HaberryAvatar className="w-4 h-4 text-[5px]" text="h" />
+                              </div>
+                              <p
+                                className={`text-xs font-medium ${
+                                  col.done
+                                    ? "text-zinc-300 line-through"
+                                    : "text-white"
+                                }`}
+                              >
+                                {task.title}
+                              </p>
                             </div>
-                            <p className="text-xs text-white font-medium">
-                              {task.title}
-                            </p>
-                          </div>
-                        ))}
-                    </div>
-                  </div>
-
-                  {/* COLUMN 4: DONE */}
-                  <div
-                    onDragOver={handleDragOver}
-                    onDrop={(e) => handleDrop(e, "done")}
-                    className="bg-[#121316] border border-zinc-800/80 rounded-xl p-3.5 space-y-3 min-h-[400px]"
-                  >
-                    <div className="flex items-center justify-between px-1">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                        <span className="text-xs font-semibold text-zinc-200">
-                          Done
-                        </span>
-                        <span className="text-[11px] text-zinc-500 font-mono">
-                          {tasks.filter((t) => t.status === "done").length}
-                        </span>
+                          ))}
+                        </div>
                       </div>
-
-                      <div className="flex items-center gap-1">
-                        <Archive className="w-3.5 h-3.5 text-zinc-500" />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setNewTaskDefaultStatus("done");
-                            setNewTaskModalOpen(true);
-                          }}
-                          className="text-zinc-500 hover:text-white p-1 rounded cursor-pointer"
-                          title="Add completed task"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      {tasks
-                        .filter((t) => t.status === "done")
-                        .map((task) => (
-                          <div
-                            key={task.id}
-                            draggable
-                            onDragStart={(e) => handleDragStart(e, task.id)}
-                            onClick={() => setSelectedTaskForDetail(task)}
-                            className="p-3.5 rounded-xl bg-[#18191d] border border-zinc-800 hover:border-zinc-700 transition-all space-y-2 cursor-grab active:cursor-grabbing group shadow-sm"
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className="text-[11px] font-mono text-zinc-500">
-                                {task.key}
-                              </span>
-                              <HaberryAvatar className="w-4 h-4 text-[5px]" text="h" />
-                            </div>
-                            <p className="text-xs text-zinc-300 font-medium line-through">
-                              {task.title}
-                            </p>
-                          </div>
-                        ))}
-                    </div>
-                  </div>
+                    );
+                  })}
                 </div>
               </>
             )}
@@ -2174,6 +2462,27 @@ export default function WorkspaceDashboardClient({
         onClose={() => setCreateProjectModalOpen(false)}
         onCreateProject={handleCreateNewProject}
       />
+
+      {/* ========================================================= */}
+      {/* MODAL 6: Delete Project Confirmation                      */}
+      {/* ========================================================= */}
+      <DeleteProjectModal
+        project={projectToDelete}
+        isOpen={deleteProjectModalOpen}
+        onClose={() => {
+          setDeleteProjectModalOpen(false);
+          setProjectToDelete(null);
+        }}
+        onConfirmDelete={handleConfirmDeleteProject}
+      />
+
+      {/* Floating Toast Notification */}
+      {copiedNotice && (
+        <div className="fixed bottom-6 right-6 z-50 bg-[#16171b] border border-zinc-700 text-white text-xs px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <Check className="w-4 h-4 text-emerald-400" />
+          <span>{copiedNotice}</span>
+        </div>
+      )}
     </div>
   );
 }

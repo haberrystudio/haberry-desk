@@ -17,11 +17,11 @@ interface NewTaskModalProps {
   isOpen: boolean;
   onClose: () => void;
   projectName: string;
-  defaultStatus?: "todo" | "in_progress" | "in_review" | "done";
+  defaultStatus?: "todo" | "in_progress" | "in_review" | "done" | string;
   onCreateTask: (task: {
     title: string;
     description: string;
-    status: "todo" | "in_progress" | "in_review" | "done";
+    status: "todo" | "in_progress" | "in_review" | "done" | string;
     priority: "none" | "low" | "medium" | "high" | "urgent";
     assignee: string;
     createMore: boolean;
@@ -41,7 +41,7 @@ export function NewTaskModal({
 }: NewTaskModalProps) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [status, setStatus] = useState<"todo" | "in_progress" | "in_review" | "done">(defaultStatus);
+  const [status, setStatus] = useState<"todo" | "in_progress" | "in_review" | "done" | string>(defaultStatus);
   const [priority, setPriority] = useState<"none" | "low" | "medium" | "high" | "urgent">("none");
   const [assignee, setAssignee] = useState(currentUserName);
   const [createMore, setCreateMore] = useState(false);
