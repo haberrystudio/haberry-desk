@@ -70,9 +70,9 @@ export async function updateSession(request: NextRequest) {
   }
 
   // Rule 2: If NOT LOGGED IN
-  // Block dashboard ("/dashboard" and any sub-routes) -> redirect to "/auth/sign-in"
+  // Block dashboard and onboarding -> redirect to "/auth/sign-in"
   if (!user) {
-    if (pathname.startsWith("/dashboard")) {
+    if (pathname.startsWith("/dashboard") || pathname.startsWith("/onboarding")) {
       return createRedirectResponse("/auth/sign-in");
     }
   }

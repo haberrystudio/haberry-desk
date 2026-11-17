@@ -141,7 +141,7 @@ export default function DashboardPage() {
     },
   ]);
 
-  // Auth Protection: Check session on mount
+  // Auth Protection & Active Workspace Redirection
   useEffect(() => {
     const supabase = createClient();
     supabase.auth.getUser().then(({ data: { user }, error }) => {
@@ -149,24 +149,21 @@ export default function DashboardPage() {
         // Not logged in -> block access and redirect to sign in
         router.replace("/auth/sign-in");
       } else {
-        setUser(user);
-        setIsLoading(false);
+        // Forward to active workspace if stored
+        try {
+          const savedWs = localStorage.getItem("haberry_active_workspace");
+          if (savedWs) {
+            const parsed = JSON.parse(savedWs);
+            if (parsed?.id) {
+              router.replace(`/dashboard/workspace/${parsed.id}`);
+              return;
+            }
+          }
+        } catch {}
+        // Fallback to default workspace
+        router.replace("/dashboard/workspace/haberry-desk");
       }
     });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session?.user) {
-        router.replace("/auth/sign-in");
-      } else {
-        setUser(session.user);
-      }
-    });
-
-    return () => {
-      subscription.unsubscribe();
-    };
   }, [router]);
 
   // Calculate dynamic greeting and date

@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   HaberryDeskIcon,
   GithubIcon,
@@ -23,16 +23,23 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { Toast, type ToastMessage } from "@/components/Toast";
 
-export default function SignUpPage() {
+function SignUpContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const inviteId = searchParams.get("invite");
+  const invitedEmail = searchParams.get("email");
 
   // Form Fields
   const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(invitedEmail || "");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  // Invitation info
+  const [inviterName, setInviterName] = useState("Haberry Studio");
+  const [workspaceName, setWorkspaceName] = useState("Haberry Desk");
 
   // OTP Verification Step
   const [otpCode, setOtpCode] = useState("");
@@ -44,21 +51,60 @@ export default function SignUpPage() {
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Check if already authenticated on mount -> redirect to dashboard
+  // If invitedEmail changes from URL, update state
+  useEffect(() => {
+    if (invitedEmail && !email) {
+      setEmail(invitedEmail);
+    }
+  }, [invitedEmail, email]);
+
+  // Load invitation metadata if inviteId present
+  useEffect(() => {
+    if (!inviteId) return;
+    try {
+      const stored = localStorage.getItem(`invitation_${inviteId}`);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed.inviterName) setInviterName(parsed.inviterName);
+        if (parsed.workspaceName) setWorkspaceName(parsed.workspaceName);
+      }
+    } catch {}
+
+    const supabase = createClient();
+    supabase
+      .from("workspace_invitations")
+      .select("inviter_name, workspace_name")
+      .eq("id", inviteId)
+      .single()
+      .then(({ data }) => {
+        if (data) {
+          if (data.inviter_name) setInviterName(data.inviter_name);
+          if (data.workspace_name) setWorkspaceName(data.workspace_name);
+        }
+      });
+  }, [inviteId]);
+
+  // Check if already authenticated on mount -> redirect appropriately
   useEffect(() => {
     const supabase = createClient();
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {
         setToast({
           type: "info",
-          message: "You are already signed in. Redirecting to your dashboard...",
+          message: inviteId
+            ? "You are logged in. Redirecting to your invitation..."
+            : "You are already signed in. Redirecting to your dashboard...",
         });
         setTimeout(() => {
-          router.replace("/dashboard");
+          if (inviteId) {
+            router.replace(`/invitations/accept/${inviteId}`);
+          } else {
+            router.replace("/dashboard");
+          }
         }, 800);
       }
     });
-  }, [router]);
+  }, [inviteId, router]);
 
   // Countdown timer for resending OTP
   useEffect(() => {
@@ -67,6 +113,11 @@ export default function SignUpPage() {
       return () => clearTimeout(timer);
     }
   }, [countdown]);
+
+  // Target destination after successful signup / verification
+  const successRedirectUrl = inviteId
+    ? `/invitations/accept/${inviteId}`
+    : "/onboarding";
 
   // Step 1: Submit Signup Form (Name, Email, Password, Confirm Password)
   const handleSignUp = async (e: React.FormEvent) => {
@@ -105,7 +156,9 @@ export default function SignUpPage() {
 
     try {
       const supabase = createClient();
-      const redirectUrl = `${window.location.origin}/auth/callback?next=/dashboard`;
+      const redirectUrl = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
+        successRedirectUrl
+      )}`;
 
       const { data, error } = await supabase.auth.signUp({
         email: email.trim(),
@@ -131,22 +184,28 @@ export default function SignUpPage() {
             type: "error",
             message: msg,
             actionText: "Sign in here",
-            actionHref: "/auth/sign-in",
+            actionHref: inviteId
+              ? `/auth/sign-in?invite=${inviteId}&email=${encodeURIComponent(
+                  email.trim()
+                )}`
+              : "/auth/sign-in",
           });
         } else {
           setErrorMessage(error.message);
           setToast({ type: "error", message: error.message });
         }
       } else {
-        // If user is already confirmed (e.g. email confirmation disabled in project settings)
+        // If user is already confirmed
         if (data.session) {
           setStep("success");
           setToast({
             type: "success",
-            message: "Account created! Redirecting to dashboard...",
+            message: inviteId
+              ? "Account created! Opening your invitation..."
+              : "Account created! Setting up your workspace...",
           });
           setTimeout(() => {
-            window.location.href = "/dashboard";
+            window.location.href = successRedirectUrl;
           }, 1000);
         } else {
           // Transition to OTP verification step
@@ -224,10 +283,12 @@ export default function SignUpPage() {
         setStep("success");
         setToast({
           type: "success",
-          message: "Verification successful! Opening your workspace...",
+          message: inviteId
+            ? "Verification successful! Opening your invitation..."
+            : "Verification successful! Welcome to Haberry Desk...",
         });
         setTimeout(() => {
-          window.location.href = "/dashboard";
+          window.location.href = successRedirectUrl;
         }, 1000);
       }
     } catch (err: unknown) {
@@ -248,7 +309,9 @@ export default function SignUpPage() {
 
     try {
       const supabase = createClient();
-      const redirectUrl = `${window.location.origin}/auth/callback?next=/dashboard`;
+      const redirectUrl = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
+        successRedirectUrl
+      )}`;
 
       // Calling resend generates a new token and automatically expires any older token
       let { error } = await supabase.auth.resend({
@@ -312,7 +375,9 @@ export default function SignUpPage() {
     setErrorMessage(null);
     try {
       const supabase = createClient();
-      const redirectUrl = `${window.location.origin}/auth/callback?next=/dashboard`;
+      const redirectUrl = `${window.location.origin}/auth/callback?next=${encodeURIComponent(
+        successRedirectUrl
+      )}`;
 
       const { error } = await supabase.auth.signInWithOAuth({
         provider,
@@ -365,6 +430,23 @@ export default function SignUpPage() {
             </Link>
           </div>
 
+          {/* Invitation Banner if invited */}
+          {inviteId && (
+            <div className="mb-5 p-3.5 rounded-xl bg-[#18181b] border border-purple-500/30 text-xs flex items-center gap-3 animate-in fade-in shadow-lg">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-purple-500 to-pink-500 flex items-center justify-center text-white font-bold text-sm shrink-0 shadow-md">
+                H
+              </div>
+              <div className="flex-1 leading-snug">
+                <p className="text-white font-medium">
+                  {inviterName} invited you to {workspaceName}
+                </p>
+                <p className="text-[11px] text-zinc-400">
+                  Create your account to join this workspace
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Heading */}
           <h1 className="text-2xl font-semibold text-white tracking-tight">
             Create your account
@@ -372,6 +454,8 @@ export default function SignUpPage() {
           <p className="text-sm text-zinc-400 mt-1 mb-6">
             {step === "otp"
               ? "Enter the 6-digit verification code sent to your email."
+              : inviteId
+              ? `You've been invited by ${inviterName}. Fill out your details to join.`
               : "Enter your details to set up your workspace."}
           </p>
 
@@ -551,7 +635,13 @@ export default function SignUpPage() {
               <p className="text-xs text-zinc-400 text-center mt-6 pt-2">
                 Already have an account?{" "}
                 <Link
-                  href="/auth/sign-in"
+                  href={
+                    inviteId
+                      ? `/auth/sign-in?invite=${inviteId}${
+                          email ? `&email=${encodeURIComponent(email)}` : ""
+                        }`
+                      : "/auth/sign-in"
+                  }
                   className="text-white underline font-medium hover:text-zinc-200 transition-colors"
                 >
                   Sign in
@@ -657,7 +747,9 @@ export default function SignUpPage() {
                   Account Verified Successfully!
                 </h3>
                 <p className="text-xs text-zinc-400">
-                  Redirecting to your Haberry Desk workspace...
+                  {inviteId
+                    ? "Redirecting to your workspace invitation..."
+                    : "Redirecting to your Haberry Desk workspace..."}
                 </p>
               </div>
             </div>
@@ -678,5 +770,19 @@ export default function SignUpPage() {
         </Link>
       </footer>
     </div>
+  );
+}
+
+export default function SignUpPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[#0e0e11] flex items-center justify-center">
+          <Loader2 className="w-6 h-6 animate-spin text-zinc-400" />
+        </div>
+      }
+    >
+      <SignUpContent />
+    </Suspense>
   );
 }

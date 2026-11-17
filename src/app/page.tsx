@@ -22,11 +22,21 @@ export default function Home() {
   const [authMode, setAuthMode] = useState<"signin" | "trial">("trial");
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
-  // If already logged in, redirect straight to dashboard
+  // If already logged in, redirect straight to dashboard workspace
   useEffect(() => {
     const supabase = createClient();
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {
+        try {
+          const savedWs = localStorage.getItem("haberry_active_workspace");
+          if (savedWs) {
+            const parsed = JSON.parse(savedWs);
+            if (parsed?.id) {
+              router.replace(`/dashboard/workspace/${parsed.id}`);
+              return;
+            }
+          }
+        } catch {}
         router.replace("/dashboard");
       } else {
         setIsCheckingAuth(false);
