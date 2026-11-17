@@ -20,6 +20,7 @@ import {
   X,
   LogOut,
   Circle,
+  Check,
   ChevronRight,
   Loader2,
   Archive,
@@ -27,6 +28,8 @@ import {
   SlidersHorizontal,
   Shield,
   ShieldAlert,
+  Layout,
+  FolderKanban,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { User } from "@supabase/supabase-js";
@@ -37,6 +40,11 @@ import {
 } from "@/components/TaskDetailModal";
 import { NewTaskModal } from "@/components/NewTaskModal";
 import { InviteMemberModal } from "@/components/InviteMemberModal";
+import { CreateWorkspaceModal } from "@/components/CreateWorkspaceModal";
+import {
+  CreateProjectModal,
+  ProjectIcon,
+} from "@/components/CreateProjectModal";
 
 // Custom Haberry Avatar with exact gradient seen in the screenshots
 export function HaberryAvatar({
@@ -66,6 +74,23 @@ export interface WorkspaceMember {
   name: string;
   role: "owner" | "admin" | "member" | "viewer";
   status: "active" | "invited";
+}
+
+export interface WorkspaceListItem {
+  id: string;
+  name: string;
+  projectName?: string;
+  taskPrefix?: string;
+  description?: string;
+}
+
+export interface ProjectItem {
+  id: string;
+  workspace_id: string;
+  name: string;
+  prefix: string;
+  icon?: string;
+  description?: string;
 }
 
 export function formatRelativeTime(timestamp?: string | null): string {
@@ -117,18 +142,31 @@ export default function WorkspaceDashboardClient({
 
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSwitching, setIsSwitching] = useState(false);
+  const [targetWorkspaceName, setTargetWorkspaceName] = useState("");
 
   // Workspace Info
   const [workspaceName, setWorkspaceName] = useState("Haberry");
-  const [projectName, setProjectName] = useState("Haberry-Desk");
-  const [taskPrefix, setTaskPrefix] = useState("HAB");
   const [isTeam, setIsTeam] = useState(true);
 
-  // UI Navigation
+  // Projects State
+  const [projects, setProjects] = useState<ProjectItem[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [projectName, setProjectName] = useState("Haberry-Desk");
+  const [taskPrefix, setTaskPrefix] = useState("HAB");
+
+  // Workspaces List & Switcher States
+  const [allWorkspaces, setAllWorkspaces] = useState<WorkspaceListItem[]>([]);
+  const [workspaceDropdownOpen, setWorkspaceDropdownOpen] = useState(false);
+  const [createWorkspaceModalOpen, setCreateWorkspaceModalOpen] = useState(false);
+  const [createProjectModalOpen, setCreateProjectModalOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+
+  // UI Navigation - Defaults to Home
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeView, setActiveView] = useState<
     "home" | "kanban" | "inbox" | "tasks" | "members"
-  >("kanban");
+  >("home");
   const [kanbanTab, setKanbanTab] = useState<"tasks" | "backlog">("tasks");
 
   // Modals
@@ -144,7 +182,7 @@ export default function WorkspaceDashboardClient({
   const [greeting, setGreeting] = useState("Good evening");
   const [formattedDate, setFormattedDate] = useState("Saturday, October 31");
 
-  // Tasks state (Full 4-column kanban tasks)
+  // Tasks state
   const [tasks, setTasks] = useState<TaskDetailData[]>([]);
 
   // Members state
@@ -158,8 +196,11 @@ export default function WorkspaceDashboardClient({
     { id: string; author: string; action: string; taskRef: string; timestamp: string }[]
   >([]);
 
-  // Load workspace, tasks, members & auth from Supabase
+  // Load workspace, projects, tasks, members & auth from Supabase
   useEffect(() => {
+    setIsLoading(true);
+    setActiveView("home");
+
     const supabase = createClient();
     supabase.auth.getUser().then(async ({ data: { user }, error }) => {
       if (error || !user) {
@@ -173,10 +214,8 @@ export default function WorkspaceDashboardClient({
         user.email?.split("@")[0] ||
         "Haberry Studio";
 
-      // Attempt to load workspace from localStorage
+      // Attempt to load current workspace info from localStorage
       let currentWsName = "Haberry";
-      let currentProjName = "Haberry-Desk";
-      let currentPrefix = "HAB";
       let teamFlag = true;
       let initialTeammates: string[] = [];
 
@@ -186,8 +225,6 @@ export default function WorkspaceDashboardClient({
           const parsed = JSON.parse(savedWs);
           if (parsed.id === workspaceId || !workspaceId) {
             currentWsName = parsed.name || "Haberry";
-            currentProjName = parsed.projectName || "Haberry-Desk";
-            currentPrefix = parsed.taskPrefix || "HAB";
             teamFlag = parsed.audience !== "solo";
             initialTeammates = parsed.teammates || [];
           }
@@ -195,8 +232,6 @@ export default function WorkspaceDashboardClient({
       } catch {}
 
       setWorkspaceName(currentWsName);
-      setProjectName(currentProjName);
-      setTaskPrefix(currentPrefix);
       setIsTeam(teamFlag);
 
       // Members Setup (Owner + Teammates)
@@ -222,7 +257,7 @@ export default function WorkspaceDashboardClient({
       setMembers(initialMembers);
 
       try {
-        // Ensure workspace & project exist in Supabase
+        // Ensure workspace exists in Supabase
         await supabase
           .from("workspaces")
           .upsert(
@@ -236,21 +271,124 @@ export default function WorkspaceDashboardClient({
             { onConflict: "id" }
           );
 
-        const projId = `${workspaceId}-proj`;
-        await supabase
+        // Fetch all workspaces for switcher
+        const { data: dbWorkspaces } = await supabase
+          .from("workspaces")
+          .select("id, name");
+
+        const combinedWorkspaces: WorkspaceListItem[] = [];
+        const seenWs = new Set<string>();
+
+        const appendWs = (item: WorkspaceListItem) => {
+          if (!item.id || seenWs.has(item.id)) return;
+          seenWs.add(item.id);
+          combinedWorkspaces.push(item);
+        };
+
+        // Current workspace
+        appendWs({
+          id: workspaceId,
+          name: currentWsName,
+        });
+
+        // Default workspace
+        appendWs({
+          id: "haberry-desk",
+          name: "Haberry",
+          projectName: "Haberry-Desk",
+          taskPrefix: "HAB",
+        });
+
+        // Workspaces from Supabase
+        (dbWorkspaces || []).forEach((w) => {
+          appendWs({ id: w.id, name: w.name });
+        });
+
+        // Workspaces from localStorage
+        try {
+          const localWsList = JSON.parse(
+            localStorage.getItem("haberry_all_workspaces") || "[]"
+          );
+          if (Array.isArray(localWsList)) {
+            localWsList.forEach((lw) => {
+              if (lw?.id && lw?.name) {
+                appendWs({
+                  id: lw.id,
+                  name: lw.name,
+                  projectName: lw.projectName,
+                  taskPrefix: lw.taskPrefix,
+                  description: lw.description,
+                });
+              }
+            });
+          }
+        } catch {}
+
+        setAllWorkspaces(combinedWorkspaces);
+
+        // Fetch projects for this workspace
+        const { data: dbProjects } = await supabase
           .from("projects")
-          .upsert(
+          .select("*")
+          .eq("workspace_id", workspaceId)
+          .order("created_at", { ascending: true });
+
+        let loadedProjects: ProjectItem[] = (dbProjects || []).map((p: any) => {
+          let iconName = p.icon || "layout";
+          if (!p.icon && p.description && p.description.startsWith("icon:")) {
+            const parts = p.description.split("::");
+            iconName = parts[0].replace("icon:", "");
+          }
+          return {
+            id: p.id,
+            workspace_id: p.workspace_id,
+            name: p.name,
+            prefix: p.prefix,
+            icon: iconName,
+            description: p.description,
+          };
+        });
+
+        // Special case: ONLY the starter workspace 'haberry-desk' gets default project if empty
+        if (workspaceId === "haberry-desk" && loadedProjects.length === 0) {
+          const defaultProjId = "haberry-desk-proj";
+          await supabase.from("projects").upsert(
             {
-              id: projId,
-              workspace_id: workspaceId,
-              name: currentProjName,
-              prefix: currentPrefix,
-              description: "Primary workspace board",
+              id: defaultProjId,
+              workspace_id: "haberry-desk",
+              name: "Haberry-Desk",
+              prefix: "HAB",
+              description: "icon:layout::Primary workspace board",
             },
             { onConflict: "id" }
           );
+          loadedProjects = [
+            {
+              id: defaultProjId,
+              workspace_id: "haberry-desk",
+              name: "Haberry-Desk",
+              prefix: "HAB",
+              icon: "layout",
+              description: "Primary workspace board",
+            },
+          ];
+        }
 
-        // Fetch tasks from Supabase
+        setProjects(loadedProjects);
+
+        // Active project selection
+        if (loadedProjects.length > 0) {
+          const active = loadedProjects[0];
+          setActiveProjectId(active.id);
+          setProjectName(active.name);
+          setTaskPrefix(active.prefix);
+        } else {
+          setActiveProjectId(null);
+          setProjectName("");
+          setTaskPrefix("");
+        }
+
+        // Fetch tasks for this workspace
         const { data: dbTasks } = await supabase
           .from("tasks")
           .select("*")
@@ -259,14 +397,14 @@ export default function WorkspaceDashboardClient({
 
         let loadedTasks = dbTasks || [];
 
-        // If no tasks exist for this workspace, seed starter tasks into DB!
-        if (loadedTasks.length === 0) {
+        // Only seed starter tasks for the default 'haberry-desk' workspace
+        if (workspaceId === "haberry-desk" && loadedTasks.length === 0) {
           const now = Date.now();
           const seedTasks = [
             {
-              id: `${currentPrefix}-5`,
-              workspace_id: workspaceId,
-              project_id: projId,
+              id: "HAB-5",
+              workspace_id: "haberry-desk",
+              project_id: "haberry-desk-proj",
               title: "Create your own task",
               description:
                 "Use the + next to a column name, or press T then C. Delete these starter tasks whenever you're ready.",
@@ -280,9 +418,9 @@ export default function WorkspaceDashboardClient({
               updated_at: new Date(now - 2 * 86400000).toISOString(),
             },
             {
-              id: `${currentPrefix}-6`,
-              workspace_id: workspaceId,
-              project_id: projId,
+              id: "HAB-6",
+              workspace_id: "haberry-desk",
+              project_id: "haberry-desk-proj",
               title: "dfgh",
               description: "Inspect task relationships and subtasks.",
               status: "done",
@@ -295,9 +433,9 @@ export default function WorkspaceDashboardClient({
               updated_at: new Date(now - 86400000).toISOString(),
             },
             {
-              id: `${currentPrefix}-7`,
-              workspace_id: workspaceId,
-              project_id: projId,
+              id: "HAB-7",
+              workspace_id: "haberry-desk",
+              project_id: "haberry-desk-proj",
               title: "cvbnm",
               description: "Sprint review and deliverables.",
               status: "done",
@@ -316,49 +454,35 @@ export default function WorkspaceDashboardClient({
           // Seed task activities
           await supabase.from("task_activities").insert([
             {
-              task_id: `${currentPrefix}-5`,
+              task_id: "HAB-5",
               user_id: user.id,
               author: currentUserName,
               action: "created this task",
               created_at: new Date(now - 2 * 86400000).toISOString(),
             },
             {
-              task_id: `${currentPrefix}-5`,
+              task_id: "HAB-5",
               user_id: user.id,
               author: currentUserName,
               action: "assigned the task to themselves",
               created_at: new Date(now - 2 * 86400000).toISOString(),
             },
             {
-              task_id: `${currentPrefix}-5`,
+              task_id: "HAB-5",
               user_id: user.id,
               author: currentUserName,
               action: "changed status from In Progress to To Do",
               created_at: new Date(now - 2 * 86400000).toISOString(),
             },
             {
-              task_id: `${currentPrefix}-6`,
-              user_id: user.id,
-              author: currentUserName,
-              action: "created this task",
-              created_at: new Date(now - 86400000).toISOString(),
-            },
-            {
-              task_id: `${currentPrefix}-6`,
+              task_id: "HAB-6",
               user_id: user.id,
               author: currentUserName,
               action: "completed task",
               created_at: new Date(now - 86400000).toISOString(),
             },
             {
-              task_id: `${currentPrefix}-7`,
-              user_id: user.id,
-              author: currentUserName,
-              action: "created this task",
-              created_at: new Date(now - 3 * 3600000).toISOString(),
-            },
-            {
-              task_id: `${currentPrefix}-7`,
+              task_id: "HAB-7",
               user_id: user.id,
               author: currentUserName,
               action: "moved to done",
@@ -366,30 +490,10 @@ export default function WorkspaceDashboardClient({
             },
           ]);
 
-          // Seed subtask
-          await supabase.from("subtasks").insert([
-            {
-              id: "sub-1",
-              task_id: `${currentPrefix}-6`,
-              title: "Review requirements",
-              completed: true,
-              order_index: 0,
-            },
-          ]);
-
-          // Seed relation
-          await supabase.from("task_relations").insert([
-            {
-              task_id: `${currentPrefix}-5`,
-              related_task_id: `${currentPrefix}-6`,
-              relation_type: "related",
-            },
-          ]);
-
           const { data: refetched } = await supabase
             .from("tasks")
             .select("*")
-            .eq("workspace_id", workspaceId)
+            .eq("workspace_id", "haberry-desk")
             .order("order_index", { ascending: true });
           loadedTasks = refetched || [];
         }
@@ -431,7 +535,6 @@ export default function WorkspaceDashboardClient({
             ? loadedTasks.find((item) => item.id === rel.related_task_id)
             : null;
 
-          // Find creator author from the creation activity or default
           const createAct = taskActs
             .slice()
             .reverse()
@@ -450,7 +553,7 @@ export default function WorkspaceDashboardClient({
             labels: Array.isArray(t.labels) ? t.labels : ["General"],
             startDate: t.start_date,
             dueDate: t.due_date,
-            project: currentProjName,
+            project: projectName || "Project",
             subtasks: taskSubs.map((s) => ({
               id: s.id,
               title: s.title,
@@ -488,6 +591,8 @@ export default function WorkspaceDashboardClient({
         console.error("Error loading workspace data from Supabase:", err);
       } finally {
         setIsLoading(false);
+        setIsSwitching(false);
+        setTargetWorkspaceName("");
       }
     });
   }, [router, workspaceId]);
@@ -532,6 +637,139 @@ export default function WorkspaceDashboardClient({
     const supabase = createClient();
     await supabase.auth.signOut();
     router.replace("/auth/sign-in");
+  };
+
+  // Switch Active Workspace & land on Home page with loading screen
+  const handleSwitchWorkspace = (ws: WorkspaceListItem) => {
+    setWorkspaceDropdownOpen(false);
+    if (ws.id === workspaceId) {
+      setActiveView("home");
+      return;
+    }
+
+    setIsSwitching(true);
+    setTargetWorkspaceName(ws.name);
+    setActiveView("home");
+
+    try {
+      localStorage.setItem(
+        "haberry_active_workspace",
+        JSON.stringify({
+          id: ws.id,
+          name: ws.name,
+          projectName: ws.projectName || `${ws.name}-Desk`,
+          taskPrefix: ws.taskPrefix || ws.name.slice(0, 3).toUpperCase(),
+        })
+      );
+    } catch {}
+
+    router.push(`/dashboard/workspace/${ws.id}`);
+  };
+
+  // Create New Workspace (Fresh Workspace: No auto-created projects or tasks)
+  const handleCreateNewWorkspace = async (name: string, description: string) => {
+    const slug =
+      name
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "") || `ws-${Date.now()}`;
+
+    const nowIso = new Date().toISOString();
+
+    setIsSwitching(true);
+    setTargetWorkspaceName(name.trim());
+    setActiveView("home");
+
+    const supabase = createClient();
+
+    try {
+      // Insert into Supabase workspaces ONLY (no projects, no tasks auto-created!)
+      await supabase.from("workspaces").insert({
+        id: slug,
+        name: name.trim(),
+        description: description.trim() || "",
+        plan: "free",
+        members_type: "team",
+        owner_id: user?.id,
+      });
+    } catch (err) {
+      console.error("Error creating workspace in Supabase:", err);
+    }
+
+    // Update localStorage
+    const newWsData = {
+      id: slug,
+      name: name.trim(),
+      description: description.trim(),
+      plan: "free",
+      createdAt: nowIso,
+    };
+
+    try {
+      localStorage.setItem("haberry_active_workspace", JSON.stringify(newWsData));
+      const all = JSON.parse(
+        localStorage.getItem("haberry_all_workspaces") || "[]"
+      );
+      all.push(newWsData);
+      localStorage.setItem("haberry_all_workspaces", JSON.stringify(all));
+    } catch {}
+
+    // Navigate directly into the newly created workspace as a fresh workspace
+    router.push(`/dashboard/workspace/${slug}`);
+  };
+
+  // Create New Project with Icon & Key
+  const handleCreateNewProject = async (name: string, prefix: string, icon: string) => {
+    const cleanPrefix = prefix.trim().toUpperCase() || "HAB";
+    const projId = `${workspaceId}-${cleanPrefix.toLowerCase()}-${Date.now().toString(36)}`;
+    const supabase = createClient();
+
+    const newProject: ProjectItem = {
+      id: projId,
+      workspace_id: workspaceId,
+      name: name.trim(),
+      prefix: cleanPrefix,
+      icon,
+      description: "",
+    };
+
+    try {
+      const { error: insErr } = await supabase.from("projects").insert({
+        id: projId,
+        workspace_id: workspaceId,
+        name: name.trim(),
+        prefix: cleanPrefix,
+        icon,
+        description: `icon:${icon}::`,
+      });
+
+      if (insErr && insErr.code === "PGRST204") {
+        // Fallback without icon column
+        await supabase.from("projects").insert({
+          id: projId,
+          workspace_id: workspaceId,
+          name: name.trim(),
+          prefix: cleanPrefix,
+          description: `icon:${icon}::`,
+        });
+      }
+    } catch (err) {
+      console.error("Failed to insert project into Supabase:", err);
+    }
+
+    setProjects((prev) => [...prev, newProject]);
+    setActiveProjectId(newProject.id);
+    setProjectName(newProject.name);
+    setTaskPrefix(newProject.prefix);
+    setActiveView("kanban");
+  };
+
+  // Select Active Project from Sidebar
+  const handleSelectProject = (proj: ProjectItem) => {
+    setActiveProjectId(proj.id);
+    setProjectName(proj.name);
+    setTaskPrefix(proj.prefix);
   };
 
   // Move task status & record in Supabase
@@ -641,16 +879,16 @@ export default function WorkspaceDashboardClient({
     priority: "none" | "low" | "medium" | "high" | "urgent";
     assignee: string;
   }) => {
-    // Generate next sequential key e.g. HAB-8
-    let maxNum = 4;
+    const currentPrefix = taskPrefix || "HAB";
+    let maxNum = 0;
     tasks.forEach((t) => {
-      const match = t.key.match(new RegExp(`^${taskPrefix}-(\\d+)`));
+      const match = t.key.match(new RegExp(`^${currentPrefix}-(\\d+)`));
       if (match) {
         const n = parseInt(match[1], 10);
         if (n > maxNum) maxNum = n;
       }
     });
-    const newKey = `${taskPrefix}-${maxNum + 1}`;
+    const newKey = `${currentPrefix}-${maxNum + 1}`;
 
     const author =
       user?.user_metadata?.full_name ||
@@ -687,7 +925,7 @@ export default function WorkspaceDashboardClient({
       assignee,
       creatorName: author,
       labels: ["General"],
-      project: projectName,
+      project: projectName || "Project",
       subtasks: [],
       activities: taskActivities,
     };
@@ -712,7 +950,7 @@ export default function WorkspaceDashboardClient({
       await supabase.from("tasks").insert({
         id: newKey,
         workspace_id: workspaceId,
-        project_id: `${workspaceId}-proj`,
+        project_id: activeProjectId || `${workspaceId}-proj`,
         title: newTask.title,
         description: newTask.description,
         status: newTask.status,
@@ -911,46 +1149,188 @@ export default function WorkspaceDashboardClient({
     user?.email?.split("@")[0] ||
     "Haberry Studio";
 
-  if (isLoading) {
+  // Simple, elegant loading screen when switching or loading workspaces
+  if (isLoading || isSwitching) {
+    const displayWsName = targetWorkspaceName || workspaceName || "Haberry";
     return (
-      <div className="min-h-screen bg-[#0e0e11] flex flex-col items-center justify-center text-zinc-400 gap-3 font-sans">
-        <Loader2 className="w-6 h-6 animate-spin text-zinc-200" />
-        <span className="text-xs">Loading {workspaceName} workspace...</span>
+      <div className="min-h-screen bg-[#0e0e11] flex flex-col items-center justify-center font-sans selection:bg-zinc-800 selection:text-white px-4 animate-in fade-in duration-150">
+        <div className="flex flex-col items-center text-center max-w-sm space-y-4">
+          {/* Animated Avatar with glowing ring */}
+          <div className="relative flex items-center justify-center">
+            <div
+              className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg shadow-purple-500/10 animate-pulse"
+              style={{
+                background:
+                  "linear-gradient(135deg, #ec4899 0%, #a855f7 40%, #f97316 100%)",
+              }}
+            >
+              <span className="text-white font-bold text-base tracking-tight select-none">
+                {displayWsName[0]?.toUpperCase() || "H"}
+              </span>
+            </div>
+            {/* Spinning Ring */}
+            <div className="absolute -inset-2 rounded-2xl border border-zinc-800 border-t-purple-400 animate-spin" />
+          </div>
+
+          <div className="space-y-1">
+            <h2 className="text-sm font-semibold text-white tracking-tight">
+              {isSwitching ? `Switching to ${displayWsName}...` : `Loading ${displayWsName}...`}
+            </h2>
+            <p className="text-xs text-zinc-500">
+              Opening your home dashboard
+            </p>
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-[#0e0e11] text-[#f4f4f5] flex font-sans selection:bg-zinc-800 selection:text-white">
+      {/* Background click listener to close dropdowns */}
+      {(workspaceDropdownOpen || userMenuOpen) && (
+        <div
+          className="fixed inset-0 z-30 bg-transparent"
+          onClick={() => {
+            setWorkspaceDropdownOpen(false);
+            setUserMenuOpen(false);
+          }}
+        />
+      )}
+
       {/* ========================================================= */}
       {/* LEFT SIDEBAR                                              */}
       {/* ========================================================= */}
       <aside
         className={`${
           sidebarOpen ? "w-60" : "w-0 -translate-x-full"
-        } transition-all duration-200 ease-in-out border-r border-zinc-800/70 bg-[#0f1013] flex flex-col justify-between shrink-0 fixed inset-y-0 left-0 z-30 lg:static lg:translate-x-0 overflow-y-auto overflow-x-hidden`}
+        } transition-all duration-200 ease-in-out border-r border-zinc-800/70 bg-[#0f1013] flex flex-col justify-between shrink-0 fixed inset-y-0 left-0 z-40 lg:static lg:translate-x-0 overflow-y-auto overflow-x-hidden`}
       >
         {/* Top: Workspace & Navigation */}
         <div className="p-3 space-y-4">
-          {/* Workspace Switcher Row */}
-          <div className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-zinc-800/40 transition-colors">
-            <div className="flex items-center gap-2 cursor-pointer truncate">
-              <span className="text-sm font-semibold text-white tracking-tight truncate">
-                {workspaceName}
-              </span>
-              <ChevronDown className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
+          {/* Workspace Switcher Row - Separate Controls */}
+          <div className="relative">
+            <div className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-zinc-800/40 transition-colors">
+              {/* 1. Workspace Name + Chevron Trigger */}
               <button
                 type="button"
-                title="Search"
-                className="text-zinc-400 hover:text-white transition-colors p-1 rounded cursor-pointer"
+                onClick={() => setWorkspaceDropdownOpen((prev) => !prev)}
+                className="flex items-center gap-1.5 cursor-pointer truncate hover:text-white transition-colors group focus:outline-none"
+                title="Switch workspace"
               >
-                <Search className="w-3.5 h-3.5" />
+                <span className="text-sm font-semibold text-white tracking-tight truncate max-w-[115px]">
+                  {workspaceName}
+                </span>
+                <ChevronDown
+                  className={`w-3.5 h-3.5 text-zinc-400 group-hover:text-zinc-200 transition-transform shrink-0 ${
+                    workspaceDropdownOpen ? "rotate-180" : ""
+                  }`}
+                />
               </button>
-              <HaberryAvatar className="w-5 h-5 text-[6px]" text="h" />
+
+              {/* 2. Distinct Controls: Search and Profile Avatar */}
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  title="Search"
+                  onClick={() => setActiveView("kanban")}
+                  className="text-zinc-400 hover:text-white hover:bg-zinc-800/70 transition-colors p-1.5 rounded-lg cursor-pointer"
+                >
+                  <Search className="w-3.5 h-3.5" />
+                </button>
+
+                <div className="relative">
+                  <button
+                    type="button"
+                    title={currentUserName}
+                    onClick={() => setUserMenuOpen((prev) => !prev)}
+                    className="p-0.5 rounded-full hover:ring-2 hover:ring-zinc-700 transition-all cursor-pointer focus:outline-none"
+                  >
+                    <HaberryAvatar className="w-5 h-5 text-[6px]" text="h" />
+                  </button>
+
+                  {/* Profile Dropdown */}
+                  {userMenuOpen && (
+                    <div className="absolute right-0 top-8 z-50 w-48 rounded-xl bg-[#141518] border border-zinc-800 shadow-2xl py-1.5 text-xs animate-in fade-in zoom-in-95 duration-100">
+                      <div className="px-3 py-2 border-b border-zinc-800/80">
+                        <p className="font-semibold text-white truncate">{currentUserName}</p>
+                        <p className="text-[11px] text-zinc-500 truncate">{user?.email}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setUserMenuOpen(false);
+                          setActiveView("members");
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-zinc-300 hover:text-white hover:bg-zinc-800/60 cursor-pointer"
+                      >
+                        <Users className="w-3.5 h-3.5 text-zinc-400" />
+                        <span>Workspace Members</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSignOut}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-red-400 hover:bg-zinc-800/60 cursor-pointer"
+                      >
+                        <LogOut className="w-3.5 h-3.5" />
+                        <span>Sign out</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
+
+            {/* Workspace Switcher Dropdown */}
+            {workspaceDropdownOpen && (
+              <div className="absolute left-0 top-11 z-50 w-56 rounded-xl bg-[#141518] border border-zinc-800 shadow-2xl py-1.5 text-xs animate-in fade-in zoom-in-95 duration-100">
+                <div className="px-3 py-1.5 text-[10px] uppercase font-mono text-zinc-500 font-semibold tracking-wider">
+                  Workspaces
+                </div>
+
+                <div className="max-h-56 overflow-y-auto space-y-0.5 px-1">
+                  {allWorkspaces.map((ws) => {
+                    const isCurrent = ws.id === workspaceId;
+                    return (
+                      <button
+                        key={ws.id}
+                        type="button"
+                        onClick={() => handleSwitchWorkspace(ws)}
+                        className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-left transition-colors cursor-pointer ${
+                          isCurrent
+                            ? "bg-zinc-800 text-white font-medium"
+                            : "text-zinc-300 hover:text-white hover:bg-zinc-800/60"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 truncate">
+                          <div className="w-5 h-5 rounded-md bg-zinc-700 text-zinc-200 font-bold text-[9px] flex items-center justify-center shrink-0">
+                            {ws.name[0]?.toUpperCase() || "W"}
+                          </div>
+                          <span className="truncate">{ws.name}</span>
+                        </div>
+                        {isCurrent && (
+                          <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="pt-1 mt-1 border-t border-zinc-800/80 px-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWorkspaceDropdownOpen(false);
+                      setCreateWorkspaceModalOpen(true);
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-zinc-300 hover:text-white hover:bg-zinc-800/60 transition-colors cursor-pointer font-medium"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-zinc-400" />
+                    <span>Create workspace</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Navigation Links */}
@@ -1025,20 +1405,19 @@ export default function WorkspaceDashboardClient({
             </button>
           </nav>
 
-          {/* Projects Section */}
+          {/* Projects Section with Icons & Creation */}
           <div className="pt-2">
             <div className="flex items-center justify-between px-2.5 py-1 text-xs text-zinc-400 font-medium">
               <div className="flex items-center gap-1.5 cursor-pointer hover:text-zinc-200">
                 <span>Projects</span>
-                <ChevronDown className="w-3 h-3 text-zinc-500" />
+                <span className="text-[10px] text-zinc-500 font-mono">
+                  ({projects.length})
+                </span>
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setNewTaskDefaultStatus("todo");
-                  setNewTaskModalOpen(true);
-                }}
-                title="Create task"
+                onClick={() => setCreateProjectModalOpen(true)}
+                title="Create project"
                 className="text-zinc-400 hover:text-white p-0.5 rounded cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -1046,23 +1425,55 @@ export default function WorkspaceDashboardClient({
             </div>
 
             <div className="mt-1 space-y-0.5">
-              <button
-                type="button"
-                onClick={() => setActiveView("kanban")}
-                className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer group ${
-                  activeView === "kanban"
-                    ? "bg-[#1c1d22] text-white font-medium border border-zinc-700/80"
-                    : "text-zinc-300 hover:text-white hover:bg-zinc-800/40"
-                }`}
-              >
-                <div className="flex items-center gap-2 truncate">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
-                  <span className="truncate">{projectName}</span>
-                </div>
-                <span className="text-[10px] text-zinc-500 font-mono">
-                  {tasks.length}
-                </span>
-              </button>
+              {projects.length === 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setCreateProjectModalOpen(true)}
+                  className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs text-zinc-400 hover:text-white hover:bg-zinc-800/40 border border-dashed border-zinc-800 hover:border-zinc-700 transition-colors cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5 text-zinc-500" />
+                  <span>Create project</span>
+                </button>
+              ) : (
+                projects.map((proj) => {
+                  const isCurrent = proj.id === activeProjectId;
+                  const projTaskCount = tasks.filter(
+                    (t) =>
+                      t.project === proj.name ||
+                      t.key.startsWith(proj.prefix)
+                  ).length;
+                  return (
+                    <button
+                      key={proj.id}
+                      type="button"
+                      onClick={() => {
+                        handleSelectProject(proj);
+                        setActiveView("kanban");
+                      }}
+                      className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer group ${
+                        isCurrent
+                          ? "bg-[#1c1d22] text-white font-medium border border-zinc-700/80"
+                          : "text-zinc-300 hover:text-white hover:bg-zinc-800/40"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <ProjectIcon
+                          name={proj.icon}
+                          className={`w-3.5 h-3.5 shrink-0 ${
+                            isCurrent
+                              ? "text-white"
+                              : "text-zinc-400 group-hover:text-zinc-200"
+                          }`}
+                        />
+                        <span className="truncate">{proj.name}</span>
+                      </div>
+                      <span className="text-[10px] text-zinc-500 font-mono">
+                        {projTaskCount}
+                      </span>
+                    </button>
+                  );
+                })
+              )}
             </div>
           </div>
         </div>
@@ -1115,7 +1526,9 @@ export default function WorkspaceDashboardClient({
             <div className="flex items-center gap-2 text-xs">
               <span className="text-zinc-400 font-medium">{workspaceName}</span>
               <span className="text-zinc-600">&gt;</span>
-              <span className="text-white font-medium">{projectName}</span>
+              <span className="text-white font-medium">
+                {projectName || "No project selected"}
+              </span>
             </div>
           </div>
 
@@ -1132,6 +1545,10 @@ export default function WorkspaceDashboardClient({
             <button
               type="button"
               onClick={() => {
+                if (projects.length === 0) {
+                  setCreateProjectModalOpen(true);
+                  return;
+                }
                 setNewTaskDefaultStatus("todo");
                 setNewTaskModalOpen(true);
               }}
@@ -1144,293 +1561,319 @@ export default function WorkspaceDashboardClient({
         </header>
 
         {/* ========================================================= */}
-        {/* VIEW 1: KANBAN BOARD (Matching Screenshots 1 & 2)         */}
+        {/* VIEW 1: KANBAN BOARD                                      */}
         {/* ========================================================= */}
         {activeView === "kanban" && (
           <main className="flex-1 p-4 sm:p-6 space-y-4 flex flex-col animate-in fade-in duration-150">
-            {/* View Sub-header: Tasks / Backlog Switcher */}
-            <div className="flex items-center justify-between pb-2 border-b border-zinc-800/60">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setKanbanTab("tasks")}
-                    className={`px-2.5 py-1 rounded-md text-xs font-semibold cursor-pointer transition-colors ${
-                      kanbanTab === "tasks"
-                        ? "text-white bg-zinc-800"
-                        : "text-zinc-400 hover:text-zinc-200"
-                    }`}
-                  >
-                    Tasks
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setKanbanTab("backlog")}
-                    className={`px-2.5 py-1 rounded-md text-xs font-semibold cursor-pointer transition-colors ${
-                      kanbanTab === "backlog"
-                        ? "text-white bg-zinc-800"
-                        : "text-zinc-400 hover:text-zinc-200"
-                    }`}
-                  >
-                    Backlog
-                  </button>
+            {projects.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center p-12 text-center max-w-md mx-auto space-y-4">
+                <div className="w-14 h-14 rounded-2xl bg-[#141518] border border-zinc-800 flex items-center justify-center text-zinc-400 shadow-md">
+                  <Layout className="w-7 h-7 text-zinc-300" />
                 </div>
-                <span className="text-xs text-zinc-500 font-mono">
-                  {tasks.length} tasks
-                </span>
-              </div>
-
-              {/* Filter / View Icons */}
-              <div className="flex items-center gap-2 text-zinc-400">
+                <div className="space-y-1">
+                  <h3 className="text-base font-semibold text-white">
+                    No projects in {workspaceName} yet
+                  </h3>
+                  <p className="text-xs text-zinc-400 leading-relaxed">
+                    Start fresh by creating your first project to track tasks, organize columns, and manage workflows.
+                  </p>
+                </div>
                 <button
                   type="button"
-                  title="Search tasks"
-                  className="p-1.5 rounded hover:bg-zinc-800 hover:text-white transition-colors cursor-pointer"
+                  onClick={() => setCreateProjectModalOpen(true)}
+                  className="px-5 py-2 rounded-full bg-white hover:bg-zinc-200 text-zinc-950 font-semibold text-xs transition-colors cursor-pointer flex items-center gap-1.5 shadow-sm"
                 >
-                  <Search className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  title="Filter"
-                  className="p-1.5 rounded hover:bg-zinc-800 hover:text-white transition-colors cursor-pointer"
-                >
-                  <Filter className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  title="View options"
-                  className="p-1.5 rounded hover:bg-zinc-800 hover:text-white transition-colors cursor-pointer"
-                >
-                  <SlidersHorizontal className="w-4 h-4" />
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Create Project</span>
                 </button>
               </div>
-            </div>
-
-            {/* 4 KANBAN COLUMNS WITH DRAG AND DROP */}
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 flex-1 items-start">
-              {/* COLUMN 1: TO DO */}
-              <div
-                onDragOver={handleDragOver}
-                onDrop={(e) => handleDrop(e, "todo")}
-                className="bg-[#121316] border border-zinc-800/80 rounded-xl p-3.5 space-y-3 min-h-[400px]"
-              >
-                <div className="flex items-center justify-between px-1">
-                  <div className="flex items-center gap-2">
-                    <Circle className="w-3.5 h-3.5 text-zinc-400" />
-                    <span className="text-xs font-semibold text-zinc-200">
-                      To Do
-                    </span>
-                    <span className="text-[11px] text-zinc-500 font-mono">
-                      {tasks.filter((t) => t.status === "todo").length}
-                    </span>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNewTaskDefaultStatus("todo");
-                      setNewTaskModalOpen(true);
-                    }}
-                    className="text-zinc-500 hover:text-white p-1 rounded cursor-pointer"
-                    title="Add task in To Do"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                <div className="space-y-2">
-                  {tasks
-                    .filter((t) => t.status === "todo")
-                    .map((task) => (
-                      <div
-                        key={task.id}
-                        draggable
-                        onDragStart={(e) => handleDragStart(e, task.id)}
-                        onClick={() => setSelectedTaskForDetail(task)}
-                        className="p-3.5 rounded-xl bg-[#18191d] border border-zinc-800 hover:border-zinc-700 transition-all space-y-2 cursor-grab active:cursor-grabbing group shadow-sm"
+            ) : (
+              <>
+                {/* View Sub-header: Tasks / Backlog Switcher */}
+                <div className="flex items-center justify-between pb-2 border-b border-zinc-800/60">
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setKanbanTab("tasks")}
+                        className={`px-2.5 py-1 rounded-md text-xs font-semibold cursor-pointer transition-colors ${
+                          kanbanTab === "tasks"
+                            ? "text-white bg-zinc-800"
+                            : "text-zinc-400 hover:text-zinc-200"
+                        }`}
                       >
-                        <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-mono text-zinc-500">
-                            {task.key}
-                          </span>
-                          <HaberryAvatar className="w-4 h-4 text-[5px]" text="h" />
-                        </div>
-                        <p className="text-xs text-white font-medium">
-                          {task.title}
-                        </p>
-                      </div>
-                    ))}
-                </div>
-              </div>
-
-              {/* COLUMN 2: IN PROGRESS */}
-              <div
-                onDragOver={handleDragOver}
-                onDrop={(e) => handleDrop(e, "in_progress")}
-                className="bg-[#121316] border border-zinc-800/80 rounded-xl p-3.5 space-y-3 min-h-[400px]"
-              >
-                <div className="flex items-center justify-between px-1">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3.5 h-3.5 rounded-full border border-amber-500/80 border-t-amber-400" />
-                    <span className="text-xs font-semibold text-zinc-200">
-                      In Progress
-                    </span>
-                    <span className="text-[11px] text-zinc-500 font-mono">
-                      {tasks.filter((t) => t.status === "in_progress").length}
-                    </span>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNewTaskDefaultStatus("in_progress");
-                      setNewTaskModalOpen(true);
-                    }}
-                    className="text-zinc-500 hover:text-white p-1 rounded cursor-pointer"
-                    title="Add task in In Progress"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                <div className="space-y-2">
-                  {tasks
-                    .filter((t) => t.status === "in_progress")
-                    .map((task) => (
-                      <div
-                        key={task.id}
-                        draggable
-                        onDragStart={(e) => handleDragStart(e, task.id)}
-                        onClick={() => setSelectedTaskForDetail(task)}
-                        className="p-3.5 rounded-xl bg-[#18191d] border border-amber-900/40 hover:border-amber-700 transition-all space-y-2 cursor-grab active:cursor-grabbing group shadow-sm"
+                        Tasks
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setKanbanTab("backlog")}
+                        className={`px-2.5 py-1 rounded-md text-xs font-semibold cursor-pointer transition-colors ${
+                          kanbanTab === "backlog"
+                            ? "text-white bg-zinc-800"
+                            : "text-zinc-400 hover:text-zinc-200"
+                        }`}
                       >
-                        <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-mono text-zinc-500">
-                            {task.key}
-                          </span>
-                          <HaberryAvatar className="w-4 h-4 text-[5px]" text="h" />
-                        </div>
-                        <p className="text-xs text-white font-medium">
-                          {task.title}
-                        </p>
-                      </div>
-                    ))}
-                </div>
-              </div>
-
-              {/* COLUMN 3: IN REVIEW */}
-              <div
-                onDragOver={handleDragOver}
-                onDrop={(e) => handleDrop(e, "in_review")}
-                className="bg-[#121316] border border-zinc-800/80 rounded-xl p-3.5 space-y-3 min-h-[400px]"
-              >
-                <div className="flex items-center justify-between px-1">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3.5 h-3.5 rounded-full border border-cyan-500/80 border-t-cyan-400" />
-                    <span className="text-xs font-semibold text-zinc-200">
-                      In Review
-                    </span>
-                    <span className="text-[11px] text-zinc-500 font-mono">
-                      {tasks.filter((t) => t.status === "in_review").length}
+                        Backlog
+                      </button>
+                    </div>
+                    <span className="text-xs text-zinc-500 font-mono">
+                      {tasks.length} tasks
                     </span>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNewTaskDefaultStatus("in_review");
-                      setNewTaskModalOpen(true);
-                    }}
-                    className="text-zinc-500 hover:text-white p-1 rounded cursor-pointer"
-                    title="Add task in In Review"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                <div className="space-y-2">
-                  {tasks
-                    .filter((t) => t.status === "in_review")
-                    .map((task) => (
-                      <div
-                        key={task.id}
-                        draggable
-                        onDragStart={(e) => handleDragStart(e, task.id)}
-                        onClick={() => setSelectedTaskForDetail(task)}
-                        className="p-3.5 rounded-xl bg-[#18191d] border border-cyan-900/40 hover:border-cyan-700 transition-all space-y-2 cursor-grab active:cursor-grabbing group shadow-sm"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-mono text-zinc-500">
-                            {task.key}
-                          </span>
-                          <HaberryAvatar className="w-4 h-4 text-[5px]" text="h" />
-                        </div>
-                        <p className="text-xs text-white font-medium">
-                          {task.title}
-                        </p>
-                      </div>
-                    ))}
-                </div>
-              </div>
-
-              {/* COLUMN 4: DONE */}
-              <div
-                onDragOver={handleDragOver}
-                onDrop={(e) => handleDrop(e, "done")}
-                className="bg-[#121316] border border-zinc-800/80 rounded-xl p-3.5 space-y-3 min-h-[400px]"
-              >
-                <div className="flex items-center justify-between px-1">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                    <span className="text-xs font-semibold text-zinc-200">
-                      Done
-                    </span>
-                    <span className="text-[11px] text-zinc-500 font-mono">
-                      {tasks.filter((t) => t.status === "done").length}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    <Archive className="w-3.5 h-3.5 text-zinc-500" />
+                  {/* Filter / View Icons */}
+                  <div className="flex items-center gap-2 text-zinc-400">
                     <button
                       type="button"
-                      onClick={() => {
-                        setNewTaskDefaultStatus("done");
-                        setNewTaskModalOpen(true);
-                      }}
-                      className="text-zinc-500 hover:text-white p-1 rounded cursor-pointer"
-                      title="Add completed task"
+                      title="Search tasks"
+                      className="p-1.5 rounded hover:bg-zinc-800 hover:text-white transition-colors cursor-pointer"
                     >
-                      <Plus className="w-3.5 h-3.5" />
+                      <Search className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      title="Filter"
+                      className="p-1.5 rounded hover:bg-zinc-800 hover:text-white transition-colors cursor-pointer"
+                    >
+                      <Filter className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      title="View options"
+                      className="p-1.5 rounded hover:bg-zinc-800 hover:text-white transition-colors cursor-pointer"
+                    >
+                      <SlidersHorizontal className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  {tasks
-                    .filter((t) => t.status === "done")
-                    .map((task) => (
-                      <div
-                        key={task.id}
-                        draggable
-                        onDragStart={(e) => handleDragStart(e, task.id)}
-                        onClick={() => setSelectedTaskForDetail(task)}
-                        className="p-3.5 rounded-xl bg-[#18191d] border border-zinc-800 hover:border-zinc-700 transition-all space-y-2 cursor-grab active:cursor-grabbing group shadow-sm"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-mono text-zinc-500">
-                            {task.key}
-                          </span>
-                          <HaberryAvatar className="w-4 h-4 text-[5px]" text="h" />
-                        </div>
-                        <p className="text-xs text-zinc-300 font-medium line-through">
-                          {task.title}
-                        </p>
+                {/* 4 KANBAN COLUMNS WITH DRAG AND DROP */}
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 flex-1 items-start">
+                  {/* COLUMN 1: TO DO */}
+                  <div
+                    onDragOver={handleDragOver}
+                    onDrop={(e) => handleDrop(e, "todo")}
+                    className="bg-[#121316] border border-zinc-800/80 rounded-xl p-3.5 space-y-3 min-h-[400px]"
+                  >
+                    <div className="flex items-center justify-between px-1">
+                      <div className="flex items-center gap-2">
+                        <Circle className="w-3.5 h-3.5 text-zinc-400" />
+                        <span className="text-xs font-semibold text-zinc-200">
+                          To Do
+                        </span>
+                        <span className="text-[11px] text-zinc-500 font-mono">
+                          {tasks.filter((t) => t.status === "todo").length}
+                        </span>
                       </div>
-                    ))}
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewTaskDefaultStatus("todo");
+                          setNewTaskModalOpen(true);
+                        }}
+                        className="text-zinc-500 hover:text-white p-1 rounded cursor-pointer"
+                        title="Add task in To Do"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="space-y-2">
+                      {tasks
+                        .filter((t) => t.status === "todo")
+                        .map((task) => (
+                          <div
+                            key={task.id}
+                            draggable
+                            onDragStart={(e) => handleDragStart(e, task.id)}
+                            onClick={() => setSelectedTaskForDetail(task)}
+                            className="p-3.5 rounded-xl bg-[#18191d] border border-zinc-800 hover:border-zinc-700 transition-all space-y-2 cursor-grab active:cursor-grabbing group shadow-sm"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] font-mono text-zinc-500">
+                                {task.key}
+                              </span>
+                              <HaberryAvatar className="w-4 h-4 text-[5px]" text="h" />
+                            </div>
+                            <p className="text-xs text-white font-medium">
+                              {task.title}
+                            </p>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+
+                  {/* COLUMN 2: IN PROGRESS */}
+                  <div
+                    onDragOver={handleDragOver}
+                    onDrop={(e) => handleDrop(e, "in_progress")}
+                    className="bg-[#121316] border border-zinc-800/80 rounded-xl p-3.5 space-y-3 min-h-[400px]"
+                  >
+                    <div className="flex items-center justify-between px-1">
+                      <div className="flex items-center gap-2">
+                        <div className="w-3.5 h-3.5 rounded-full border border-amber-500/80 border-t-amber-400" />
+                        <span className="text-xs font-semibold text-zinc-200">
+                          In Progress
+                        </span>
+                        <span className="text-[11px] text-zinc-500 font-mono">
+                          {tasks.filter((t) => t.status === "in_progress").length}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewTaskDefaultStatus("in_progress");
+                          setNewTaskModalOpen(true);
+                        }}
+                        className="text-zinc-500 hover:text-white p-1 rounded cursor-pointer"
+                        title="Add task in In Progress"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="space-y-2">
+                      {tasks
+                        .filter((t) => t.status === "in_progress")
+                        .map((task) => (
+                          <div
+                            key={task.id}
+                            draggable
+                            onDragStart={(e) => handleDragStart(e, task.id)}
+                            onClick={() => setSelectedTaskForDetail(task)}
+                            className="p-3.5 rounded-xl bg-[#18191d] border border-amber-900/40 hover:border-amber-700 transition-all space-y-2 cursor-grab active:cursor-grabbing group shadow-sm"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] font-mono text-zinc-500">
+                                {task.key}
+                              </span>
+                              <HaberryAvatar className="w-4 h-4 text-[5px]" text="h" />
+                            </div>
+                            <p className="text-xs text-white font-medium">
+                              {task.title}
+                            </p>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+
+                  {/* COLUMN 3: IN REVIEW */}
+                  <div
+                    onDragOver={handleDragOver}
+                    onDrop={(e) => handleDrop(e, "in_review")}
+                    className="bg-[#121316] border border-zinc-800/80 rounded-xl p-3.5 space-y-3 min-h-[400px]"
+                  >
+                    <div className="flex items-center justify-between px-1">
+                      <div className="flex items-center gap-2">
+                        <div className="w-3.5 h-3.5 rounded-full border border-cyan-500/80 border-t-cyan-400" />
+                        <span className="text-xs font-semibold text-zinc-200">
+                          In Review
+                        </span>
+                        <span className="text-[11px] text-zinc-500 font-mono">
+                          {tasks.filter((t) => t.status === "in_review").length}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewTaskDefaultStatus("in_review");
+                          setNewTaskModalOpen(true);
+                        }}
+                        className="text-zinc-500 hover:text-white p-1 rounded cursor-pointer"
+                        title="Add task in In Review"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="space-y-2">
+                      {tasks
+                        .filter((t) => t.status === "in_review")
+                        .map((task) => (
+                          <div
+                            key={task.id}
+                            draggable
+                            onDragStart={(e) => handleDragStart(e, task.id)}
+                            onClick={() => setSelectedTaskForDetail(task)}
+                            className="p-3.5 rounded-xl bg-[#18191d] border border-cyan-900/40 hover:border-cyan-700 transition-all space-y-2 cursor-grab active:cursor-grabbing group shadow-sm"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] font-mono text-zinc-500">
+                                {task.key}
+                              </span>
+                              <HaberryAvatar className="w-4 h-4 text-[5px]" text="h" />
+                            </div>
+                            <p className="text-xs text-white font-medium">
+                              {task.title}
+                            </p>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+
+                  {/* COLUMN 4: DONE */}
+                  <div
+                    onDragOver={handleDragOver}
+                    onDrop={(e) => handleDrop(e, "done")}
+                    className="bg-[#121316] border border-zinc-800/80 rounded-xl p-3.5 space-y-3 min-h-[400px]"
+                  >
+                    <div className="flex items-center justify-between px-1">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                        <span className="text-xs font-semibold text-zinc-200">
+                          Done
+                        </span>
+                        <span className="text-[11px] text-zinc-500 font-mono">
+                          {tasks.filter((t) => t.status === "done").length}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        <Archive className="w-3.5 h-3.5 text-zinc-500" />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNewTaskDefaultStatus("done");
+                            setNewTaskModalOpen(true);
+                          }}
+                          className="text-zinc-500 hover:text-white p-1 rounded cursor-pointer"
+                          title="Add completed task"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      {tasks
+                        .filter((t) => t.status === "done")
+                        .map((task) => (
+                          <div
+                            key={task.id}
+                            draggable
+                            onDragStart={(e) => handleDragStart(e, task.id)}
+                            onClick={() => setSelectedTaskForDetail(task)}
+                            className="p-3.5 rounded-xl bg-[#18191d] border border-zinc-800 hover:border-zinc-700 transition-all space-y-2 cursor-grab active:cursor-grabbing group shadow-sm"
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] font-mono text-zinc-500">
+                                {task.key}
+                              </span>
+                              <HaberryAvatar className="w-4 h-4 text-[5px]" text="h" />
+                            </div>
+                            <p className="text-xs text-zinc-300 font-medium line-through">
+                              {task.title}
+                            </p>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
+              </>
+            )}
           </main>
         )}
 
@@ -1453,58 +1896,99 @@ export default function WorkspaceDashboardClient({
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <h2 className="text-sm font-semibold text-white">Up next</h2>
-                    <button
-                      type="button"
-                      onClick={() => setActiveView("kanban")}
-                      className="text-xs text-zinc-400 hover:text-white cursor-pointer"
-                    >
-                      View all
-                    </button>
+                    {projects.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveView("kanban")}
+                        className="text-xs text-zinc-400 hover:text-white cursor-pointer"
+                      >
+                        View all
+                      </button>
+                    )}
                   </div>
 
-                  <div className="space-y-2">
-                    {tasks.map((task) => (
-                      <div
-                        key={task.id}
-                        onClick={() => setSelectedTaskForDetail(task)}
-                        className="flex items-center justify-between py-2.5 px-3 rounded-lg hover:bg-zinc-800/30 border border-zinc-800/50 cursor-pointer"
+                  {projects.length === 0 ? (
+                    <div className="p-6 rounded-xl bg-[#141518] border border-dashed border-zinc-800 text-center space-y-3">
+                      <p className="text-xs text-zinc-400">
+                        No projects created yet in this workspace.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setCreateProjectModalOpen(true)}
+                        className="px-4 py-1.5 rounded-full bg-white hover:bg-zinc-200 text-zinc-950 font-semibold text-xs transition-colors cursor-pointer inline-flex items-center gap-1.5 shadow-sm"
                       >
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs font-mono text-zinc-500">
-                            {task.key}
-                          </span>
-                          <span className="text-xs font-medium text-zinc-200">
-                            {task.title}
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Create Project</span>
+                      </button>
+                    </div>
+                  ) : tasks.length === 0 ? (
+                    <div className="p-6 rounded-xl bg-[#141518] border border-dashed border-zinc-800 text-center space-y-3">
+                      <p className="text-xs text-zinc-400">
+                        No tasks in this project yet.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNewTaskDefaultStatus("todo");
+                          setNewTaskModalOpen(true);
+                        }}
+                        className="px-4 py-1.5 rounded-full bg-white hover:bg-zinc-200 text-zinc-950 font-semibold text-xs transition-colors cursor-pointer inline-flex items-center gap-1.5 shadow-sm"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add First Task</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {tasks.map((task) => (
+                        <div
+                          key={task.id}
+                          onClick={() => setSelectedTaskForDetail(task)}
+                          className="flex items-center justify-between py-2.5 px-3 rounded-lg hover:bg-zinc-800/30 border border-zinc-800/50 cursor-pointer"
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="text-xs font-mono text-zinc-500">
+                              {task.key}
+                            </span>
+                            <span className="text-xs font-medium text-zinc-200">
+                              {task.title}
+                            </span>
+                          </div>
+                          <span className="text-xs text-zinc-500">
+                            {formatStatusLabel(task.status)}
                           </span>
                         </div>
-                        <span className="text-xs text-zinc-500">
-                          {formatStatusLabel(task.status)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 
               <div className="lg:col-span-5 space-y-3">
                 <h2 className="text-sm font-semibold text-white">Activity</h2>
                 <div className="space-y-4 pt-1">
-                  {activities.map((act) => (
-                    <div key={act.id} className="flex items-start gap-3">
-                      <HaberryAvatar className="w-6 h-6 text-[7px] mt-0.5" text="haberry" />
-                      <div className="space-y-0.5 leading-tight">
-                        <p className="text-xs text-zinc-300">
-                          <strong className="font-semibold text-white">
-                            {act.author}
-                          </strong>{" "}
-                          <span className="text-zinc-400">{act.action}</span>
-                        </p>
-                        <p className="text-[11px] text-zinc-500">
-                          {act.taskRef} · {act.timestamp}
-                        </p>
+                  {activities.length === 0 ? (
+                    <p className="text-xs text-zinc-500 italic">
+                      No activity recorded yet in this workspace.
+                    </p>
+                  ) : (
+                    activities.map((act) => (
+                      <div key={act.id} className="flex items-start gap-3">
+                        <HaberryAvatar className="w-6 h-6 text-[7px] mt-0.5" text="haberry" />
+                        <div className="space-y-0.5 leading-tight">
+                          <p className="text-xs text-zinc-300">
+                            <strong className="font-semibold text-white">
+                              {act.author}
+                            </strong>{" "}
+                            <span className="text-zinc-400">{act.action}</span>
+                          </p>
+                          <p className="text-[11px] text-zinc-500">
+                            {act.taskRef} · {act.timestamp}
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))
+                  )}
                 </div>
               </div>
             </div>
@@ -1604,25 +2088,31 @@ export default function WorkspaceDashboardClient({
             </div>
 
             <div className="space-y-2">
-              {tasks.map((task) => (
-                <div
-                  key={task.id}
-                  onClick={() => setSelectedTaskForDetail(task)}
-                  className="flex items-center justify-between p-3.5 rounded-xl bg-[#141518] border border-zinc-800/80 hover:border-zinc-700 transition-colors cursor-pointer"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs font-mono text-zinc-500">
-                      {task.key}
-                    </span>
-                    <span className="text-xs font-medium text-white">
-                      {task.title}
+              {tasks.length === 0 ? (
+                <div className="p-6 rounded-xl bg-[#141518] border border-dashed border-zinc-800 text-center text-xs text-zinc-500">
+                  No tasks assigned to you.
+                </div>
+              ) : (
+                tasks.map((task) => (
+                  <div
+                    key={task.id}
+                    onClick={() => setSelectedTaskForDetail(task)}
+                    className="flex items-center justify-between p-3.5 rounded-xl bg-[#141518] border border-zinc-800/80 hover:border-zinc-700 transition-colors cursor-pointer"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-mono text-zinc-500">
+                        {task.key}
+                      </span>
+                      <span className="text-xs font-medium text-white">
+                        {task.title}
+                      </span>
+                    </div>
+                    <span className="text-xs text-zinc-500 capitalize">
+                      {formatStatusLabel(task.status)}
                     </span>
                   </div>
-                  <span className="text-xs text-zinc-500 capitalize">
-                    {formatStatusLabel(task.status)}
-                  </span>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </main>
         )}
@@ -1647,7 +2137,7 @@ export default function WorkspaceDashboardClient({
       <NewTaskModal
         isOpen={newTaskModalOpen}
         onClose={() => setNewTaskModalOpen(false)}
-        projectName={projectName}
+        projectName={projectName || "Project"}
         defaultStatus={newTaskDefaultStatus}
         onCreateTask={handleCreateTask}
         members={members}
@@ -1662,9 +2152,27 @@ export default function WorkspaceDashboardClient({
         onClose={() => setInviteModalOpen(false)}
         workspaceId={workspaceId}
         workspaceName={workspaceName}
-        projectName={projectName}
+        projectName={projectName || "Project"}
         inviterName={currentUserName}
         onInvitationSent={handleInvitationSent}
+      />
+
+      {/* ========================================================= */}
+      {/* MODAL 4: Create Workspace Modal                           */}
+      {/* ========================================================= */}
+      <CreateWorkspaceModal
+        isOpen={createWorkspaceModalOpen}
+        onClose={() => setCreateWorkspaceModalOpen(false)}
+        onCreateWorkspace={handleCreateNewWorkspace}
+      />
+
+      {/* ========================================================= */}
+      {/* MODAL 5: Create Project Modal (with Icon Picker)          */}
+      {/* ========================================================= */}
+      <CreateProjectModal
+        isOpen={createProjectModalOpen}
+        onClose={() => setCreateProjectModalOpen(false)}
+        onCreateProject={handleCreateNewProject}
       />
     </div>
   );

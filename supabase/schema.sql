@@ -82,12 +82,16 @@ drop table if exists public.workspaces cascade;
 create table public.workspaces (
   id text primary key,
   name text not null,
+  description text default '',
   plan text default 'free',
   owner_id uuid references auth.users on delete cascade,
   members_type text default 'team',
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
+
+-- Ensure column exists if upgrading existing workspaces table
+alter table public.workspaces add column if not exists description text default '';
 
 alter table public.workspaces enable row level security;
 
@@ -117,9 +121,13 @@ create table public.projects (
   workspace_id text references public.workspaces(id) on delete cascade,
   name text not null,
   prefix text not null default 'HAB',
+  icon text default 'layout',
   description text default '',
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
+
+-- Ensure column exists if upgrading existing projects table
+alter table public.projects add column if not exists icon text default 'layout';
 
 alter table public.projects enable row level security;
 
