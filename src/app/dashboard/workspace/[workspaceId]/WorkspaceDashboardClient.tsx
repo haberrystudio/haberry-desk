@@ -68,6 +68,44 @@ export interface WorkspaceMember {
   status: "active" | "invited";
 }
 
+export function formatRelativeTime(timestamp?: string | null): string {
+  if (!timestamp) return "Just now";
+  if (timestamp.includes("ago") || timestamp === "Just now") return timestamp;
+  const date = new Date(timestamp);
+  if (isNaN(date.getTime())) return timestamp;
+  const now = new Date();
+  const diffInSeconds = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 1000));
+
+  if (diffInSeconds < 60) return "Just now";
+  const diffInMinutes = Math.floor(diffInSeconds / 60);
+  if (diffInMinutes < 60) return `${diffInMinutes}m ago`;
+  const diffInHours = Math.floor(diffInMinutes / 60);
+  if (diffInHours < 24) return `${diffInHours}h ago`;
+  const diffInDays = Math.floor(diffInHours / 24);
+  if (diffInDays === 1) return "Yesterday";
+  if (diffInDays < 7) return `${diffInDays} days ago`;
+  const diffInWeeks = Math.floor(diffInDays / 7);
+  if (diffInWeeks < 4) return `${diffInWeeks}w ago`;
+  return date.toLocaleDateString();
+}
+
+export function formatStatusLabel(
+  status: "todo" | "in_progress" | "in_review" | "done" | string
+): string {
+  switch (status) {
+    case "todo":
+      return "To Do";
+    case "in_progress":
+      return "In Progress";
+    case "in_review":
+      return "In Review";
+    case "done":
+      return "Done";
+    default:
+      return status;
+  }
+}
+
 export default function WorkspaceDashboardClient({
   params,
 }: {
@@ -106,7 +144,7 @@ export default function WorkspaceDashboardClient({
   const [greeting, setGreeting] = useState("Good evening");
   const [formattedDate, setFormattedDate] = useState("Saturday, October 31");
 
-  // Tasks state (Full 4-column kanban tasks matching screenshots 1 & 2)
+  // Tasks state (Full 4-column kanban tasks)
   const [tasks, setTasks] = useState<TaskDetailData[]>([]);
 
   // Members state
@@ -118,32 +156,22 @@ export default function WorkspaceDashboardClient({
   // Activity Feed
   const [activities, setActivities] = useState<
     { id: string; author: string; action: string; taskRef: string; timestamp: string }[]
-  >([
-    {
-      id: "act-1",
-      author: "Haberry Studio",
-      action: "changed status from In Progress to To Do",
-      taskRef: "Create your own task",
-      timestamp: "2 hours ago",
-    },
-    {
-      id: "act-2",
-      author: "Haberry Studio",
-      action: "changed status from To Do to In Progress",
-      taskRef: "Invite your team",
-      timestamp: "3 hours ago",
-    },
-  ]);
+  >([]);
 
-  // Load workspace, tasks, members & auth
+  // Load workspace, tasks, members & auth from Supabase
   useEffect(() => {
     const supabase = createClient();
-    supabase.auth.getUser().then(({ data: { user }, error }) => {
+    supabase.auth.getUser().then(async ({ data: { user }, error }) => {
       if (error || !user) {
         router.replace("/auth/sign-in");
         return;
       }
       setUser(user);
+
+      const currentUserName =
+        user.user_metadata?.full_name ||
+        user.email?.split("@")[0] ||
+        "Haberry Studio";
 
       // Attempt to load workspace from localStorage
       let currentWsName = "Haberry";
@@ -171,97 +199,12 @@ export default function WorkspaceDashboardClient({
       setTaskPrefix(currentPrefix);
       setIsTeam(teamFlag);
 
-      // Seed Starter Tasks matching Screenshot 1 (HAB-5, HAB-6, HAB-7)
-      const p = currentPrefix;
-      const initialTasks: TaskDetailData[] = [
-        {
-          id: "task-1",
-          key: `${p}-5`,
-          title: "Create your own task",
-          description:
-            "Use the + next to a column name, or press T then C. Delete these starter tasks whenever you're ready.",
-          status: "todo",
-          priority: "none",
-          assignee: "Haberry Studio",
-          labels: ["General"],
-          project: currentProjName,
-          subtasks: [],
-          relatedTask: { key: `${p}-6`, title: "dfgh" },
-          activities: [
-            {
-              id: "act-10",
-              author: "Haberry Studio",
-              action: "created this task",
-              time: "2 days ago",
-            },
-            {
-              id: "act-11",
-              author: "Haberry Studio",
-              action: "assigned the task to themselves",
-              time: "2 days ago",
-            },
-            {
-              id: "act-12",
-              author: "Haberry Studio",
-              action: "changed status from In Progress to To Do",
-              time: "2 days ago",
-            },
-          ],
-        },
-        {
-          id: "task-2",
-          key: `${p}-6`,
-          title: "dfgh",
-          description: "Inspect task relationships and subtasks.",
-          status: "done",
-          priority: "none",
-          assignee: "Haberry Studio",
-          labels: ["Dev"],
-          project: currentProjName,
-          subtasks: [
-            { id: "sub-1", title: "Review requirements", completed: true },
-          ],
-          activities: [
-            {
-              id: "act-20",
-              author: "Haberry Studio",
-              action: "completed task",
-              time: "1 day ago",
-            },
-          ],
-        },
-        {
-          id: "task-3",
-          key: `${p}-7`,
-          title: "cvbnm",
-          description: "Sprint review and deliverables.",
-          status: "done",
-          priority: "none",
-          assignee: "Haberry Studio",
-          labels: ["Frontend"],
-          project: currentProjName,
-          subtasks: [],
-          activities: [
-            {
-              id: "act-30",
-              author: "Haberry Studio",
-              action: "moved to done",
-              time: "3 hours ago",
-            },
-          ],
-        },
-      ];
-      setTasks(initialTasks);
-
       // Members Setup (Owner + Teammates)
       const initialMembers: WorkspaceMember[] = [
         {
           id: user.id,
           email: user.email || "owner@company.com",
-          name:
-            user.user_metadata?.full_name ||
-            user.email?.split("@")[0] ||
-            "Haberry Studio",
+          name: currentUserName,
           role: "owner",
           status: "active",
         },
@@ -276,9 +219,276 @@ export default function WorkspaceDashboardClient({
           status: "invited",
         });
       });
-
       setMembers(initialMembers);
-      setIsLoading(false);
+
+      try {
+        // Ensure workspace & project exist in Supabase
+        await supabase
+          .from("workspaces")
+          .upsert(
+            {
+              id: workspaceId,
+              name: currentWsName,
+              plan: "free",
+              owner_id: user.id,
+              members_type: teamFlag ? "team" : "solo",
+            },
+            { onConflict: "id" }
+          );
+
+        const projId = `${workspaceId}-proj`;
+        await supabase
+          .from("projects")
+          .upsert(
+            {
+              id: projId,
+              workspace_id: workspaceId,
+              name: currentProjName,
+              prefix: currentPrefix,
+              description: "Primary workspace board",
+            },
+            { onConflict: "id" }
+          );
+
+        // Fetch tasks from Supabase
+        const { data: dbTasks } = await supabase
+          .from("tasks")
+          .select("*")
+          .eq("workspace_id", workspaceId)
+          .order("order_index", { ascending: true });
+
+        let loadedTasks = dbTasks || [];
+
+        // If no tasks exist for this workspace, seed starter tasks into DB!
+        if (loadedTasks.length === 0) {
+          const now = Date.now();
+          const seedTasks = [
+            {
+              id: `${currentPrefix}-5`,
+              workspace_id: workspaceId,
+              project_id: projId,
+              title: "Create your own task",
+              description:
+                "Use the + next to a column name, or press T then C. Delete these starter tasks whenever you're ready.",
+              status: "todo",
+              priority: "none",
+              assignee_name: currentUserName,
+              assignee_id: user.id,
+              labels: ["General"],
+              order_index: 0,
+              created_at: new Date(now - 2 * 86400000).toISOString(),
+              updated_at: new Date(now - 2 * 86400000).toISOString(),
+            },
+            {
+              id: `${currentPrefix}-6`,
+              workspace_id: workspaceId,
+              project_id: projId,
+              title: "dfgh",
+              description: "Inspect task relationships and subtasks.",
+              status: "done",
+              priority: "none",
+              assignee_name: currentUserName,
+              assignee_id: user.id,
+              labels: ["Dev"],
+              order_index: 1,
+              created_at: new Date(now - 86400000).toISOString(),
+              updated_at: new Date(now - 86400000).toISOString(),
+            },
+            {
+              id: `${currentPrefix}-7`,
+              workspace_id: workspaceId,
+              project_id: projId,
+              title: "cvbnm",
+              description: "Sprint review and deliverables.",
+              status: "done",
+              priority: "none",
+              assignee_name: currentUserName,
+              assignee_id: user.id,
+              labels: ["Frontend"],
+              order_index: 2,
+              created_at: new Date(now - 3 * 3600000).toISOString(),
+              updated_at: new Date(now - 3 * 3600000).toISOString(),
+            },
+          ];
+
+          await supabase.from("tasks").insert(seedTasks);
+
+          // Seed task activities
+          await supabase.from("task_activities").insert([
+            {
+              task_id: `${currentPrefix}-5`,
+              user_id: user.id,
+              author: currentUserName,
+              action: "created this task",
+              created_at: new Date(now - 2 * 86400000).toISOString(),
+            },
+            {
+              task_id: `${currentPrefix}-5`,
+              user_id: user.id,
+              author: currentUserName,
+              action: "assigned the task to themselves",
+              created_at: new Date(now - 2 * 86400000).toISOString(),
+            },
+            {
+              task_id: `${currentPrefix}-5`,
+              user_id: user.id,
+              author: currentUserName,
+              action: "changed status from In Progress to To Do",
+              created_at: new Date(now - 2 * 86400000).toISOString(),
+            },
+            {
+              task_id: `${currentPrefix}-6`,
+              user_id: user.id,
+              author: currentUserName,
+              action: "created this task",
+              created_at: new Date(now - 86400000).toISOString(),
+            },
+            {
+              task_id: `${currentPrefix}-6`,
+              user_id: user.id,
+              author: currentUserName,
+              action: "completed task",
+              created_at: new Date(now - 86400000).toISOString(),
+            },
+            {
+              task_id: `${currentPrefix}-7`,
+              user_id: user.id,
+              author: currentUserName,
+              action: "created this task",
+              created_at: new Date(now - 3 * 3600000).toISOString(),
+            },
+            {
+              task_id: `${currentPrefix}-7`,
+              user_id: user.id,
+              author: currentUserName,
+              action: "moved to done",
+              created_at: new Date(now - 3 * 3600000).toISOString(),
+            },
+          ]);
+
+          // Seed subtask
+          await supabase.from("subtasks").insert([
+            {
+              id: "sub-1",
+              task_id: `${currentPrefix}-6`,
+              title: "Review requirements",
+              completed: true,
+              order_index: 0,
+            },
+          ]);
+
+          // Seed relation
+          await supabase.from("task_relations").insert([
+            {
+              task_id: `${currentPrefix}-5`,
+              related_task_id: `${currentPrefix}-6`,
+              relation_type: "related",
+            },
+          ]);
+
+          const { data: refetched } = await supabase
+            .from("tasks")
+            .select("*")
+            .eq("workspace_id", workspaceId)
+            .order("order_index", { ascending: true });
+          loadedTasks = refetched || [];
+        }
+
+        // Fetch activities, subtasks, relations for all tasks
+        const taskIds = loadedTasks.map((t) => t.id);
+        let allActivities: any[] = [];
+        let allSubtasks: any[] = [];
+        let allRelations: any[] = [];
+
+        if (taskIds.length > 0) {
+          const [actRes, subRes, relRes] = await Promise.all([
+            supabase
+              .from("task_activities")
+              .select("*")
+              .in("task_id", taskIds)
+              .order("created_at", { ascending: false }),
+            supabase
+              .from("subtasks")
+              .select("*")
+              .in("task_id", taskIds)
+              .order("order_index", { ascending: true }),
+            supabase
+              .from("task_relations")
+              .select("*")
+              .in("task_id", taskIds),
+          ]);
+          allActivities = actRes.data || [];
+          allSubtasks = subRes.data || [];
+          allRelations = relRes.data || [];
+        }
+
+        // Assemble tasks state
+        const assembledTasks: TaskDetailData[] = loadedTasks.map((t) => {
+          const taskActs = allActivities.filter((a) => a.task_id === t.id);
+          const taskSubs = allSubtasks.filter((s) => s.task_id === t.id);
+          const rel = allRelations.find((r) => r.task_id === t.id);
+          const relatedTaskObj = rel
+            ? loadedTasks.find((item) => item.id === rel.related_task_id)
+            : null;
+
+          // Find creator author from the creation activity or default
+          const createAct = taskActs
+            .slice()
+            .reverse()
+            .find((a) => a.action?.toLowerCase().includes("created"));
+          const creator = createAct?.author || t.assignee_name || currentUserName;
+
+          return {
+            id: t.id,
+            key: t.id,
+            title: t.title,
+            description: t.description || "",
+            status: t.status as "todo" | "in_progress" | "in_review" | "done",
+            priority: (t.priority || "none") as "none" | "low" | "medium" | "high" | "urgent",
+            assignee: t.assignee_name || currentUserName,
+            creatorName: creator,
+            labels: Array.isArray(t.labels) ? t.labels : ["General"],
+            startDate: t.start_date,
+            dueDate: t.due_date,
+            project: currentProjName,
+            subtasks: taskSubs.map((s) => ({
+              id: s.id,
+              title: s.title,
+              completed: Boolean(s.completed),
+            })),
+            relatedTask: relatedTaskObj
+              ? { key: relatedTaskObj.id, title: relatedTaskObj.title }
+              : undefined,
+            activities: taskActs.map((act) => ({
+              id: act.id,
+              author: act.author,
+              action: act.action,
+              time: formatRelativeTime(act.created_at),
+            })),
+          };
+        });
+
+        setTasks(assembledTasks);
+
+        // Populate workspace activities feed
+        const workspaceActs = allActivities.map((act) => {
+          const matchedTask = loadedTasks.find((t) => t.id === act.task_id);
+          return {
+            id: act.id,
+            author: act.author,
+            action: act.action,
+            taskRef: matchedTask
+              ? `${matchedTask.id} ${matchedTask.title}`
+              : "Task",
+            timestamp: formatRelativeTime(act.created_at),
+          };
+        });
+        setActivities(workspaceActs);
+      } catch (err) {
+        console.error("Error loading workspace data from Supabase:", err);
+      } finally {
+        setIsLoading(false);
+      }
     });
   }, [router, workspaceId]);
 
@@ -324,29 +534,82 @@ export default function WorkspaceDashboardClient({
     router.replace("/auth/sign-in");
   };
 
-  // Move task status
-  const moveTaskStatus = (
+  // Move task status & record in Supabase
+  const moveTaskStatus = async (
     taskId: string,
     newStatus: "todo" | "in_progress" | "in_review" | "done"
   ) => {
+    const currentTask = tasks.find((t) => t.id === taskId);
+    if (!currentTask || currentTask.status === newStatus) return;
+
+    const oldStatusLabel = formatStatusLabel(currentTask.status);
+    const newStatusLabel = formatStatusLabel(newStatus);
+    const author =
+      user?.user_metadata?.full_name ||
+      user?.email?.split("@")[0] ||
+      "Haberry Studio";
+    const actionText = `changed status from ${oldStatusLabel} to ${newStatusLabel}`;
+    const newActId = `act-${Date.now()}`;
+    const nowIso = new Date().toISOString();
+
+    const newActivity = {
+      id: newActId,
+      author,
+      action: actionText,
+      time: "Just now",
+    };
+
+    // Optimistic UI update
     setTasks((prev) =>
       prev.map((t) => {
         if (t.id === taskId) {
-          const newAct = {
-            id: `act-${Date.now()}`,
-            author: user?.user_metadata?.full_name || "You",
-            action: `changed status from ${t.status} to ${newStatus}`,
-            time: "Just now",
-          };
-          return {
+          const updated = {
             ...t,
             status: newStatus,
-            activities: [newAct, ...(t.activities || [])],
+            activities: [newActivity, ...(t.activities || [])],
           };
+          if (selectedTaskForDetail?.id === taskId) {
+            setSelectedTaskForDetail(updated);
+          }
+          return updated;
         }
         return t;
       })
     );
+
+    // Update workspace activities feed
+    setActivities((prev) => [
+      {
+        id: newActId,
+        author,
+        action: actionText,
+        taskRef: `${currentTask.key} ${currentTask.title}`,
+        timestamp: "Just now",
+      },
+      ...prev,
+    ]);
+
+    // Persist to Supabase
+    try {
+      const supabase = createClient();
+      await supabase
+        .from("tasks")
+        .update({
+          status: newStatus,
+          updated_at: nowIso,
+        })
+        .eq("id", taskId);
+
+      await supabase.from("task_activities").insert({
+        task_id: taskId,
+        user_id: user?.id,
+        author,
+        action: actionText,
+        created_at: nowIso,
+      });
+    } catch (err) {
+      console.error("Failed to persist task status change to Supabase:", err);
+    }
   };
 
   // HTML5 Drag and Drop Handlers
@@ -359,73 +622,262 @@ export default function WorkspaceDashboardClient({
     e.preventDefault();
   };
 
-  const handleDrop = (
+  const handleDrop = async (
     e: React.DragEvent,
     targetStatus: "todo" | "in_progress" | "in_review" | "done"
   ) => {
     e.preventDefault();
     const id = e.dataTransfer.getData("text/plain") || draggedTaskId;
     if (!id) return;
-    moveTaskStatus(id, targetStatus);
     setDraggedTaskId(null);
+    await moveTaskStatus(id, targetStatus);
   };
 
-  // Create Task from NewTaskModal
-  const handleCreateTask = (newTaskData: {
+  // Create Task from NewTaskModal & Persist to Supabase
+  const handleCreateTask = async (newTaskData: {
     title: string;
     description: string;
     status: "todo" | "in_progress" | "in_review" | "done";
     priority: "none" | "low" | "medium" | "high" | "urgent";
     assignee: string;
   }) => {
-    const nextNum = tasks.length + 5;
+    // Generate next sequential key e.g. HAB-8
+    let maxNum = 4;
+    tasks.forEach((t) => {
+      const match = t.key.match(new RegExp(`^${taskPrefix}-(\\d+)`));
+      if (match) {
+        const n = parseInt(match[1], 10);
+        if (n > maxNum) maxNum = n;
+      }
+    });
+    const newKey = `${taskPrefix}-${maxNum + 1}`;
+
+    const author =
+      user?.user_metadata?.full_name ||
+      user?.email?.split("@")[0] ||
+      "Haberry Studio";
+    const assignee = newTaskData.assignee || author;
+    const nowIso = new Date().toISOString();
+
+    const creationActId = `act-${Date.now()}`;
+    const creationAct = {
+      id: creationActId,
+      author,
+      action: `created this task in ${formatStatusLabel(newTaskData.status)}`,
+      time: "Just now",
+    };
+
+    const taskActivities = [creationAct];
+    if (assignee && assignee !== "Unassigned" && assignee !== author) {
+      taskActivities.push({
+        id: `act-${Date.now() + 1}`,
+        author,
+        action: `assigned the task to ${assignee}`,
+        time: "Just now",
+      });
+    }
+
     const newTask: TaskDetailData = {
-      id: `task-${Date.now()}`,
-      key: `${taskPrefix}-${nextNum}`,
+      id: newKey,
+      key: newKey,
       title: newTaskData.title,
-      description: newTaskData.description,
+      description: newTaskData.description || "",
       status: newTaskData.status,
       priority: newTaskData.priority,
-      assignee: newTaskData.assignee || "Haberry Studio",
+      assignee,
+      creatorName: author,
       labels: ["General"],
       project: projectName,
       subtasks: [],
-      activities: [
-        {
-          id: `act-${Date.now()}`,
-          author: user?.user_metadata?.full_name || "Haberry Studio",
-          action: `created this task in ${newTaskData.status}`,
-          time: "Just now",
-        },
-      ],
+      activities: taskActivities,
     };
 
+    // Optimistic UI update
     setTasks((prev) => [newTask, ...prev]);
 
-    // Add to workspace activity
     setActivities((prev) => [
       {
-        id: `act-${Date.now()}`,
-        author: user?.user_metadata?.full_name || "Haberry Studio",
-        action: `created task in ${newTaskData.status}`,
-        taskRef: `${newTask.key} ${newTask.title}`,
+        id: creationActId,
+        author,
+        action: creationAct.action,
+        taskRef: `${newKey} ${newTask.title}`,
         timestamp: "Just now",
       },
       ...prev,
     ]);
+
+    // Persist to Supabase
+    try {
+      const supabase = createClient();
+      await supabase.from("tasks").insert({
+        id: newKey,
+        workspace_id: workspaceId,
+        project_id: `${workspaceId}-proj`,
+        title: newTask.title,
+        description: newTask.description,
+        status: newTask.status,
+        priority: newTask.priority,
+        assignee_name: assignee,
+        assignee_id: user?.id,
+        labels: ["General"],
+        order_index: tasks.length,
+        created_at: nowIso,
+        updated_at: nowIso,
+      });
+
+      await supabase.from("task_activities").insert({
+        task_id: newKey,
+        user_id: user?.id,
+        author,
+        action: creationAct.action,
+        created_at: nowIso,
+      });
+
+      if (assignee && assignee !== "Unassigned" && assignee !== author) {
+        await supabase.from("task_activities").insert({
+          task_id: newKey,
+          user_id: user?.id,
+          author,
+          action: `assigned the task to ${assignee}`,
+          created_at: new Date(Date.now() + 100).toISOString(),
+        });
+      }
+    } catch (err) {
+      console.error("Failed to insert new task to Supabase:", err);
+    }
   };
 
-  // Update Task from TaskDetailModal
-  const handleUpdateTask = (updated: TaskDetailData) => {
-    setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
-    setSelectedTaskForDetail(updated);
+  // Update Task from TaskDetailModal & Persist to Supabase
+  const handleUpdateTask = async (updated: TaskDetailData) => {
+    const prevTask = tasks.find((t) => t.id === updated.id);
+    const author =
+      user?.user_metadata?.full_name ||
+      user?.email?.split("@")[0] ||
+      "Haberry Studio";
+    const nowIso = new Date().toISOString();
+
+    let updatedActivities = updated.activities || [];
+
+    // Track status change activity
+    if (prevTask && prevTask.status !== updated.status) {
+      const act = {
+        id: `act-${Date.now()}`,
+        author,
+        action: `changed status from ${formatStatusLabel(prevTask.status)} to ${formatStatusLabel(updated.status)}`,
+        time: "Just now",
+      };
+      updatedActivities = [act, ...updatedActivities];
+      setActivities((a) => [
+        {
+          id: act.id,
+          author,
+          action: act.action,
+          taskRef: `${updated.key} ${updated.title}`,
+          timestamp: "Just now",
+        },
+        ...a,
+      ]);
+
+      try {
+        const supabase = createClient();
+        await supabase.from("task_activities").insert({
+          task_id: updated.id,
+          user_id: user?.id,
+          author,
+          action: act.action,
+          created_at: nowIso,
+        });
+      } catch {}
+    }
+
+    // Track assignee change activity
+    if (prevTask && prevTask.assignee !== updated.assignee) {
+      const act = {
+        id: `act-${Date.now() + 1}`,
+        author,
+        action: `reassigned task to ${updated.assignee}`,
+        time: "Just now",
+      };
+      updatedActivities = [act, ...updatedActivities];
+      setActivities((a) => [
+        {
+          id: act.id,
+          author,
+          action: act.action,
+          taskRef: `${updated.key} ${updated.title}`,
+          timestamp: "Just now",
+        },
+        ...a,
+      ]);
+
+      try {
+        const supabase = createClient();
+        await supabase.from("task_activities").insert({
+          task_id: updated.id,
+          user_id: user?.id,
+          author,
+          action: act.action,
+          created_at: nowIso,
+        });
+      } catch {}
+    }
+
+    const taskWithActs = { ...updated, activities: updatedActivities };
+
+    // Optimistic UI update
+    setTasks((prev) =>
+      prev.map((t) => (t.id === updated.id ? taskWithActs : t))
+    );
+    setSelectedTaskForDetail(taskWithActs);
+
+    // Persist to Supabase
+    try {
+      const supabase = createClient();
+      await supabase
+        .from("tasks")
+        .update({
+          title: updated.title,
+          description: updated.description,
+          status: updated.status,
+          priority: updated.priority,
+          assignee_name: updated.assignee,
+          updated_at: nowIso,
+        })
+        .eq("id", updated.id);
+
+      // Persist subtasks
+      if (updated.subtasks && updated.subtasks.length > 0) {
+        for (let i = 0; i < updated.subtasks.length; i++) {
+          const s = updated.subtasks[i];
+          await supabase.from("subtasks").upsert(
+            {
+              id: s.id,
+              task_id: updated.id,
+              title: s.title,
+              completed: s.completed,
+              order_index: i,
+            },
+            { onConflict: "id" }
+          );
+        }
+      }
+    } catch (err) {
+      console.error("Failed to persist task updates to Supabase:", err);
+    }
   };
 
-  // Delete Task
-  const handleDeleteTask = (taskId: string) => {
+  // Delete Task & Persist to Supabase
+  const handleDeleteTask = async (taskId: string) => {
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
     if (selectedTaskForDetail?.id === taskId) {
       setSelectedTaskForDetail(null);
+    }
+
+    try {
+      const supabase = createClient();
+      await supabase.from("tasks").delete().eq("id", taskId);
+    } catch (err) {
+      console.error("Failed to delete task from Supabase:", err);
     }
   };
 
@@ -453,6 +905,11 @@ export default function WorkspaceDashboardClient({
 
   const isCurrentUserOwner =
     members.find((m) => m.id === user?.id)?.role === "owner" || true;
+
+  const currentUserName =
+    user?.user_metadata?.full_name ||
+    user?.email?.split("@")[0] ||
+    "Haberry Studio";
 
   if (isLoading) {
     return (
@@ -598,67 +1055,32 @@ export default function WorkspaceDashboardClient({
                     : "text-zinc-300 hover:text-white hover:bg-zinc-800/40"
                 }`}
               >
-                <div className="flex items-center gap-2.5 truncate">
-                  <LayoutGrid className="w-3.5 h-3.5 text-zinc-400 group-hover:text-white shrink-0" />
+                <div className="flex items-center gap-2 truncate">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
                   <span className="truncate">{projectName}</span>
                 </div>
-                <div className="w-3.5 h-3.5 rounded-full border border-zinc-700 bg-zinc-800/80 flex items-center justify-center text-[8px] text-zinc-400 shrink-0">
-                  ⚡
-                </div>
+                <span className="text-[10px] text-zinc-500 font-mono">
+                  {tasks.length}
+                </span>
               </button>
             </div>
           </div>
         </div>
 
-        {/* Bottom Sidebar */}
-        <div className="p-3 space-y-3 border-t border-zinc-800/70">
-          <div className="space-y-0.5 text-xs text-zinc-400">
-            <button
-              type="button"
-              onClick={() => setInviteModalOpen(true)}
-              className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg hover:text-white hover:bg-zinc-800/40 transition-colors cursor-pointer"
-            >
-              <UserPlus className="w-4 h-4 text-zinc-400" />
-              <span>Invite people</span>
-            </button>
-
-            <button
-              type="button"
-              className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg hover:text-white hover:bg-zinc-800/40 transition-colors cursor-pointer"
-            >
-              <Settings className="w-4 h-4 text-zinc-400" />
-              <span>Settings</span>
-            </button>
-          </div>
-
-          {/* Bottom Version & Theme Toggle Row */}
-          <div className="flex items-center justify-between px-2 pt-1 text-xs text-zinc-500">
-            <span className="font-mono text-[11px]">v2.48.0</span>
-
-            <div className="flex items-center bg-[#141518] border border-zinc-800 rounded-full p-0.5">
-              <div
-                title="Dark theme (active)"
-                className="p-1 rounded-full bg-zinc-800 text-zinc-200"
-              >
-                <Moon className="w-3 h-3" />
+        {/* Bottom User Bar */}
+        <div className="p-3 border-t border-zinc-800/60 bg-[#0e0e11]/40">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5 truncate">
+              <div className="w-7 h-7 rounded-full bg-zinc-800 text-zinc-200 font-semibold text-xs flex items-center justify-center border border-zinc-700 shrink-0">
+                {currentUserName[0]?.toUpperCase() || "H"}
               </div>
-              <div
-                title="Light theme"
-                className="p-1 rounded-full text-zinc-500 hover:text-zinc-300"
-              >
-                <Sun className="w-3 h-3" />
-              </div>
-            </div>
-          </div>
-
-          {/* User Account / Sign Out Row */}
-          <div className="pt-2 border-t border-zinc-800/70 flex items-center justify-between px-2">
-            <div className="flex items-center gap-2 overflow-hidden">
-              <div className="w-6 h-6 rounded-full bg-zinc-800 text-zinc-200 flex items-center justify-center text-xs font-semibold shrink-0">
-                {user?.email?.[0]?.toUpperCase() || "U"}
-              </div>
-              <div className="truncate text-xs text-zinc-300">
-                {user?.email || "User"}
+              <div className="truncate">
+                <p className="text-xs font-medium text-white truncate">
+                  {currentUserName}
+                </p>
+                <p className="text-[10px] text-zinc-500 truncate">
+                  {user?.email || "owner@company.com"}
+                </p>
               </div>
             </div>
 
@@ -666,7 +1088,7 @@ export default function WorkspaceDashboardClient({
               type="button"
               onClick={handleSignOut}
               title="Sign out"
-              className="text-zinc-400 hover:text-red-400 p-1 rounded transition-colors cursor-pointer"
+              className="p-1.5 rounded hover:bg-zinc-800 hover:text-red-400 transition-colors text-zinc-400 cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" />
             </button>
@@ -678,64 +1100,64 @@ export default function WorkspaceDashboardClient({
       {/* MAIN CONTENT AREA                                         */}
       {/* ========================================================= */}
       <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-        {/* Top Header / Breadcrumbs */}
-        <header className="h-12 border-b border-zinc-800/70 px-4 sm:px-8 flex items-center justify-between shrink-0 bg-[#0e0e11]">
-          <div className="flex items-center gap-3 text-xs text-zinc-400">
+        {/* Top Header Bar */}
+        <header className="h-12 border-b border-zinc-800/80 px-4 sm:px-6 flex items-center justify-between shrink-0 bg-[#0e0e11] sticky top-0 z-20">
+          <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="text-zinc-400 hover:text-white cursor-pointer"
+              className="text-zinc-400 hover:text-white transition-colors cursor-pointer p-1 rounded"
               title="Toggle sidebar"
             >
               <PanelLeft className="w-4 h-4" />
             </button>
 
-            <div className="flex items-center gap-1.5">
-              <span
-                onClick={() => setActiveView("home")}
-                className="hover:text-zinc-200 cursor-pointer"
-              >
-                {workspaceName}
-              </span>
-              <span className="text-zinc-600">/</span>
-              <span className="text-zinc-200 font-medium">
-                {activeView === "kanban" ? projectName : activeView}
-              </span>
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-zinc-400 font-medium">{workspaceName}</span>
+              <span className="text-zinc-600">&gt;</span>
+              <span className="text-white font-medium">{projectName}</span>
             </div>
           </div>
 
-          {/* Quick Actions */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setInviteModalOpen(true)}
+              className="px-2.5 py-1 rounded-md text-xs font-medium text-zinc-300 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer flex items-center gap-1.5 border border-zinc-800"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Invite</span>
+            </button>
+
             <button
               type="button"
               onClick={() => {
                 setNewTaskDefaultStatus("todo");
                 setNewTaskModalOpen(true);
               }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-zinc-200 text-zinc-950 font-semibold text-xs transition-colors cursor-pointer shadow-sm"
+              className="px-3 py-1 rounded-md bg-white hover:bg-zinc-200 text-zinc-950 font-semibold text-xs transition-colors cursor-pointer flex items-center gap-1 shadow-sm"
             >
-              <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-              <span>New task</span>
+              <Plus className="w-3.5 h-3.5" />
+              <span>New Task</span>
             </button>
-            <HaberryAvatar className="w-6 h-6 text-[7px]" text="haberry" />
           </div>
         </header>
 
         {/* ========================================================= */}
-        {/* VIEW 1: 4-COLUMN KANBAN PERSPECTIVE (Matching Screenshot 1) */}
+        {/* VIEW 1: KANBAN BOARD (Matching Screenshots 1 & 2)         */}
         {/* ========================================================= */}
         {activeView === "kanban" && (
-          <main className="flex-1 p-6 sm:p-8 flex flex-col min-w-0 overflow-y-auto animate-in fade-in duration-150">
-            {/* Top Bar with Tabs and Filters */}
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center gap-3">
-                <div className="flex items-center bg-[#141518] border border-zinc-800 rounded-lg p-0.5 text-xs font-medium">
+          <main className="flex-1 p-4 sm:p-6 space-y-4 flex flex-col animate-in fade-in duration-150">
+            {/* View Sub-header: Tasks / Backlog Switcher */}
+            <div className="flex items-center justify-between pb-2 border-b border-zinc-800/60">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-1">
                   <button
                     type="button"
                     onClick={() => setKanbanTab("tasks")}
-                    className={`px-3 py-1 rounded-md transition-colors cursor-pointer ${
+                    className={`px-2.5 py-1 rounded-md text-xs font-semibold cursor-pointer transition-colors ${
                       kanbanTab === "tasks"
-                        ? "bg-[#202127] text-white"
+                        ? "text-white bg-zinc-800"
                         : "text-zinc-400 hover:text-zinc-200"
                     }`}
                   >
@@ -744,9 +1166,9 @@ export default function WorkspaceDashboardClient({
                   <button
                     type="button"
                     onClick={() => setKanbanTab("backlog")}
-                    className={`px-3 py-1 rounded-md transition-colors cursor-pointer ${
+                    className={`px-2.5 py-1 rounded-md text-xs font-semibold cursor-pointer transition-colors ${
                       kanbanTab === "backlog"
-                        ? "bg-[#202127] text-white"
+                        ? "text-white bg-zinc-800"
                         : "text-zinc-400 hover:text-zinc-200"
                     }`}
                   >
@@ -784,7 +1206,7 @@ export default function WorkspaceDashboardClient({
               </div>
             </div>
 
-            {/* 4 KANBAN COLUMNS WITH DRAG AND DROP (Matching Screenshot 1) */}
+            {/* 4 KANBAN COLUMNS WITH DRAG AND DROP */}
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 flex-1 items-start">
               {/* COLUMN 1: TO DO */}
               <div
@@ -1056,7 +1478,7 @@ export default function WorkspaceDashboardClient({
                           </span>
                         </div>
                         <span className="text-xs text-zinc-500">
-                          {task.status}
+                          {formatStatusLabel(task.status)}
                         </span>
                       </div>
                     ))}
@@ -1197,7 +1619,7 @@ export default function WorkspaceDashboardClient({
                     </span>
                   </div>
                   <span className="text-xs text-zinc-500 capitalize">
-                    {task.status.replace("_", " ")}
+                    {formatStatusLabel(task.status)}
                   </span>
                 </div>
               ))}
@@ -1207,7 +1629,7 @@ export default function WorkspaceDashboardClient({
       </div>
 
       {/* ========================================================= */}
-      {/* MODAL 1: Task Detail Slide-over (Matching Screenshot 2)   */}
+      {/* MODAL 1: Task Detail Slide-over                           */}
       {/* ========================================================= */}
       <TaskDetailModal
         task={selectedTaskForDetail}
@@ -1215,10 +1637,12 @@ export default function WorkspaceDashboardClient({
         onClose={() => setSelectedTaskForDetail(null)}
         onUpdateTask={handleUpdateTask}
         onDeleteTask={handleDeleteTask}
+        members={members}
+        currentUserName={currentUserName}
       />
 
       {/* ========================================================= */}
-      {/* MODAL 2: New Task Modal (Matching Screenshot 3)           */}
+      {/* MODAL 2: New Task Modal                                   */}
       {/* ========================================================= */}
       <NewTaskModal
         isOpen={newTaskModalOpen}
@@ -1226,10 +1650,12 @@ export default function WorkspaceDashboardClient({
         projectName={projectName}
         defaultStatus={newTaskDefaultStatus}
         onCreateTask={handleCreateTask}
+        members={members}
+        currentUserName={currentUserName}
       />
 
       {/* ========================================================= */}
-      {/* MODAL 3: Invite Team Member (Matching Screenshot 4)       */}
+      {/* MODAL 3: Invite Team Member                               */}
       {/* ========================================================= */}
       <InviteMemberModal
         isOpen={inviteModalOpen}
@@ -1237,7 +1663,7 @@ export default function WorkspaceDashboardClient({
         workspaceId={workspaceId}
         workspaceName={workspaceName}
         projectName={projectName}
-        inviterName={user?.user_metadata?.full_name || "Haberry Studio"}
+        inviterName={currentUserName}
         onInvitationSent={handleInvitationSent}
       />
     </div>

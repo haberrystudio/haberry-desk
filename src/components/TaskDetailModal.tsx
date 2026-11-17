@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   X,
   Link as LinkIcon,
@@ -32,6 +32,7 @@ export interface TaskDetailData {
   status: "todo" | "in_progress" | "in_review" | "done";
   priority: "none" | "low" | "medium" | "high" | "urgent";
   assignee: string;
+  creatorName?: string;
   labels: string[];
   startDate?: string;
   dueDate?: string;
@@ -47,6 +48,8 @@ interface TaskDetailModalProps {
   onClose: () => void;
   onUpdateTask: (updated: TaskDetailData) => void;
   onDeleteTask?: (taskId: string) => void;
+  members?: { id: string; name: string; email: string; role?: string }[];
+  currentUserName?: string;
 }
 
 export function TaskDetailModal({
@@ -55,18 +58,31 @@ export function TaskDetailModal({
   onClose,
   onUpdateTask,
   onDeleteTask,
+  members = [],
+  currentUserName = "Haberry Studio",
 }: TaskDetailModalProps) {
-  if (!isOpen || !task) return null;
-
-  const [title, setTitle] = useState(task.title);
-  const [description, setDescription] = useState(task.description);
-  const [status, setStatus] = useState(task.status);
-  const [priority, setPriority] = useState(task.priority);
-  const [assignee, setAssignee] = useState(task.assignee);
-  const [subtasks, setSubtasks] = useState<SubtaskItem[]>(task.subtasks || []);
+  const [title, setTitle] = useState(task?.title || "");
+  const [description, setDescription] = useState(task?.description || "");
+  const [status, setStatus] = useState(task?.status || "todo");
+  const [priority, setPriority] = useState(task?.priority || "none");
+  const [assignee, setAssignee] = useState(task?.assignee || "Haberry Studio");
+  const [subtasks, setSubtasks] = useState<SubtaskItem[]>(task?.subtasks || []);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [showAddSubtask, setShowAddSubtask] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+
+  useEffect(() => {
+    if (task) {
+      setTitle(task.title);
+      setDescription(task.description);
+      setStatus(task.status);
+      setPriority(task.priority);
+      setAssignee(task.assignee || "Haberry Studio");
+      setSubtasks(task.subtasks || []);
+    }
+  }, [task]);
+
+  if (!isOpen || !task) return null;
 
   // Sync edits back
   const handleTitleChange = (val: string) => {
@@ -87,6 +103,11 @@ export function TaskDetailModal({
   const handlePriorityChange = (newPriority: "none" | "low" | "medium" | "high" | "urgent") => {
     setPriority(newPriority);
     onUpdateTask({ ...task, priority: newPriority });
+  };
+
+  const handleAssigneeChange = (newAssignee: string) => {
+    setAssignee(newAssignee);
+    onUpdateTask({ ...task, assignee: newAssignee });
   };
 
   const handleToggleSubtask = (subId: string) => {
@@ -117,6 +138,11 @@ export function TaskDetailModal({
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
   };
+
+  const creatorDisplayName =
+    task.creatorName ||
+    task.activities?.find((a) => a.action.toLowerCase().includes("created"))?.author ||
+    "Haberry Studio";
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex justify-end animate-in fade-in duration-150">
@@ -334,7 +360,7 @@ export function TaskDetailModal({
             </div>
           </div>
 
-          {/* RIGHT: Metadata Sidebar (Exact matching right column of screenshot 2) */}
+          {/* RIGHT: Metadata Sidebar */}
           <div className="w-full md:w-64 p-6 bg-[#0e0e11] space-y-5 text-xs shrink-0 select-none">
             {/* Status */}
             <div className="flex items-center justify-between">
@@ -378,9 +404,31 @@ export function TaskDetailModal({
             {/* Assignee */}
             <div className="flex items-center justify-between">
               <span className="text-zinc-500">Assignee</span>
-              <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-[#141518] border border-zinc-800 text-zinc-200">
-                <HaberryAvatar className="w-4 h-4 text-[5px]" text="h" />
-                <span className="truncate max-w-[100px]">{assignee || "Haberry Studio"}</span>
+              <select
+                value={assignee}
+                onChange={(e) => handleAssigneeChange(e.target.value)}
+                className="bg-[#141518] border border-zinc-800 text-zinc-200 rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-zinc-600 cursor-pointer max-w-[130px] truncate"
+              >
+                <option value={currentUserName}>{currentUserName}</option>
+                {members
+                  ?.filter((m) => m.name !== currentUserName)
+                  .map((m) => (
+                    <option key={m.id} value={m.name}>
+                      {m.name}
+                    </option>
+                  ))}
+                <option value="Unassigned">Unassigned</option>
+              </select>
+            </div>
+
+            {/* Created by */}
+            <div className="flex items-center justify-between">
+              <span className="text-zinc-500">Created by</span>
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#141518] border border-zinc-800 text-zinc-300">
+                <HaberryAvatar className="w-3.5 h-3.5 text-[5px]" text="h" />
+                <span className="truncate max-w-[110px] text-zinc-200 font-medium">
+                  {creatorDisplayName}
+                </span>
               </div>
             </div>
 
@@ -430,4 +478,3 @@ export function TaskDetailModal({
     </div>
   );
 }
-

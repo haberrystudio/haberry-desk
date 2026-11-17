@@ -459,7 +459,7 @@ export default function DashboardPage() {
 
           {/* Bottom Version & Theme Toggle Row */}
           <div className="flex items-center justify-between px-2 pt-1 text-xs text-zinc-500">
-            <span className="font-mono text-[11px]">v2.48.0</span>
+            <span className="font-mono text-[11px]">v1.0</span>
 
             <div className="flex items-center bg-[#141518] border border-zinc-800 rounded-full p-0.5">
               <div

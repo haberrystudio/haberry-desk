@@ -719,7 +719,7 @@ export default function OnboardingPage() {
             </div>
 
             <div className="text-[10px] text-zinc-600 font-mono px-2">
-              Haberry Desk v2.48
+              Haberry Desk v1.0
             </div>
           </div>
 

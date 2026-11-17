@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   X,
   Paperclip,
@@ -11,6 +11,7 @@ import {
   Tag,
   Check,
 } from "lucide-react";
+import { HaberryAvatar } from "@/app/dashboard/workspace/[workspaceId]/WorkspaceDashboardClient";
 
 interface NewTaskModalProps {
   isOpen: boolean;
@@ -25,6 +26,8 @@ interface NewTaskModalProps {
     assignee: string;
     createMore: boolean;
   }) => void;
+  members?: { id: string; name: string; email: string; role?: string }[];
+  currentUserName?: string;
 }
 
 export function NewTaskModal({
@@ -33,14 +36,24 @@ export function NewTaskModal({
   projectName,
   defaultStatus = "todo",
   onCreateTask,
+  members = [],
+  currentUserName = "Haberry Studio",
 }: NewTaskModalProps) {
-  if (!isOpen) return null;
-
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState<"todo" | "in_progress" | "in_review" | "done">(defaultStatus);
   const [priority, setPriority] = useState<"none" | "low" | "medium" | "high" | "urgent">("none");
+  const [assignee, setAssignee] = useState(currentUserName);
   const [createMore, setCreateMore] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setStatus(defaultStatus);
+      setAssignee(currentUserName);
+    }
+  }, [isOpen, defaultStatus, currentUserName]);
+
+  if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,7 +64,7 @@ export function NewTaskModal({
       description: description.trim(),
       status,
       priority,
-      assignee: "Haberry Studio",
+      assignee: assignee || currentUserName,
       createMore,
     });
 
@@ -70,10 +83,17 @@ export function NewTaskModal({
       <div className="bg-[#141417] border border-zinc-800 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden font-sans">
         {/* Header */}
         <div className="px-6 pt-5 pb-2 flex items-center justify-between text-xs text-zinc-400">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="font-mono text-zinc-500">TASK</span>
             <span className="text-zinc-600">&gt;</span>
             <span className="text-white font-medium">New Task</span>
+            <span className="text-zinc-600">·</span>
+            <div className="flex items-center gap-1.5 text-zinc-400">
+              <HaberryAvatar className="w-4 h-4 text-[5px]" text="h" />
+              <span>
+                Created by <strong className="text-zinc-200 font-medium">{currentUserName}</strong>
+              </span>
+            </div>
           </div>
 
           <button
@@ -111,7 +131,7 @@ export function NewTaskModal({
             <Paperclip className="w-4 h-4 text-zinc-600 absolute right-1 bottom-2 cursor-pointer hover:text-zinc-400" />
           </div>
 
-          {/* Metadata Action Toolbar (Matching Screenshot 3) */}
+          {/* Metadata Action Toolbar */}
           <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-zinc-800/70 text-xs">
             {/* Project Picker */}
             <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#0e0e11] border border-zinc-800 text-zinc-300">
@@ -152,13 +172,29 @@ export function NewTaskModal({
               <option value="urgent">Urgent</option>
             </select>
 
-            <button
-              type="button"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#0e0e11] border border-zinc-800 text-zinc-400 hover:text-white cursor-pointer"
-            >
-              <User className="w-3.5 h-3.5" />
-              <span>Assign</span>
-            </button>
+            {/* Assignee Picker */}
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#0e0e11] border border-zinc-800 text-zinc-300">
+              <User className="w-3.5 h-3.5 text-zinc-400" />
+              <select
+                value={assignee}
+                onChange={(e) => setAssignee(e.target.value)}
+                className="bg-transparent text-zinc-300 focus:outline-none cursor-pointer"
+              >
+                <option value={currentUserName} className="bg-[#141417] text-white">
+                  Assign: {currentUserName} (You)
+                </option>
+                {members
+                  .filter((m) => m.name !== currentUserName)
+                  .map((m) => (
+                    <option key={m.id} value={m.name} className="bg-[#141417] text-white">
+                      Assign: {m.name}
+                    </option>
+                  ))}
+                <option value="Unassigned" className="bg-[#141417] text-zinc-400">
+                  Assign: Unassigned
+                </option>
+              </select>
+            </div>
 
             <button
               type="button"
@@ -203,4 +239,3 @@ export function NewTaskModal({
     </div>
   );
 }
-
